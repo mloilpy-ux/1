@@ -47,7 +47,7 @@ class AppService : Service(), ShakeDetector.Listener {
     private var containerView: LinearLayout? = null
     private var deerImageView: ImageView? = null
     private var speechBubbleTv: TextView? = null
-    
+
     private var isShowing = false
     private var shakeDetector: ShakeDetector? = null
     private var audioRecordInstance: AudioRecord? = null
@@ -87,7 +87,7 @@ class AppService : Service(), ShakeDetector.Listener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundNotification()
-        
+
         when (intent?.action) {
             "FORCE_PEEK" -> triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Ручной запуск.", force = true)
             "UPDATE_SETTINGS" -> applyLiveSettings()
@@ -97,7 +97,7 @@ class AppService : Service(), ShakeDetector.Listener {
             try {
                 val sensorManager = applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
                 shakeDetector = ShakeDetector(this).apply {
-                    start(sensorManager) // Исправлено: чистый старт нашего сенсора
+                    start(sensorManager)
                 }
             } catch (e: Exception) {
                 logToFile("Ошибка акселерометра: ${e.localizedMessage}")
@@ -121,7 +121,7 @@ class AppService : Service(), ShakeDetector.Listener {
             val endTime = System.currentTimeMillis()
             val startTime = endTime - 10000
             val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime)
-            
+
             if (!stats.isNullOrEmpty()) {
                 val sortedStats = stats.sortedByDescending { it.lastTimeUsed }
                 return sortedStats[0].packageName
@@ -153,7 +153,7 @@ class AppService : Service(), ShakeDetector.Listener {
         systemReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_POWER_CONNECTED -> 
+                    Intent.ACTION_POWER_CONNECTED ->
                         triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Подключен внешний источник питания.")
                     Intent.ACTION_HEADSET_PLUG -> {
                         if (intent.getIntExtra("state", -1) == 1) {
@@ -189,10 +189,10 @@ class AppService : Service(), ShakeDetector.Listener {
 
             try {
                 audioRecordInstance = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION, 
-                    sampleRate, 
-                    channelConfig, 
-                    audioFormat, 
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    sampleRate,
+                    channelConfig,
+                    audioFormat,
                     bufferSize
                 )
 
@@ -213,25 +213,25 @@ class AppService : Service(), ShakeDetector.Listener {
                             val v = abs(buffer[i].toInt())
                             if (v > maxAmp) maxAmp = v
                         }
-                        
+
                         if (maxAmp > threshold) {
                             val now = System.currentTimeMillis()
                             val diff = now - lastAudioPeakTime
-                            
+
                             if (lastAudioPeakTime == 0L) {
                                 lastAudioPeakTime = now
-                                mainHandler.post { 
-                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Зафиксирован одиночный акустический импульс.") 
+                                mainHandler.post {
+                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Зафиксирован одиночный акустический импульс.")
                                 }
                             } else if (diff in 50..1000) {
                                 lastAudioPeakTime = 0
-                                mainHandler.post { 
-                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Авторизованный двойной щелчок.", force = true) 
+                                mainHandler.post {
+                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Авторизованный двойной щелчок.", force = true)
                                 }
                             } else if (diff > 1000) {
                                 lastAudioPeakTime = now
-                                mainHandler.post { 
-                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Изолированный сторонний звук.") 
+                                mainHandler.post {
+                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Изолированный сторонний звук.")
                                 }
                             }
                         }
@@ -250,7 +250,6 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     private fun setDeerDrawableByContext(command: String) {
-        // Временно используем системную иконку как фолбэк, чтобы не было Unresolved reference
         val drawableRes = when (command.trim().uppercase()) {
             "NOIR" -> android.R.drawable.ic_menu_compass
             "AFRAID" -> android.R.drawable.ic_menu_compass
@@ -272,7 +271,7 @@ class AppService : Service(), ShakeDetector.Listener {
     private fun triggerDeerPeek(peekType: PeekType, contextReason: String, force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && (now - lastTriggerTime < cooldownMillis) && peekType == PeekType.SHORT_LOOK) {
-            return 
+            return
         }
 
         mainHandler.post {
@@ -284,13 +283,12 @@ class AppService : Service(), ShakeDetector.Listener {
             try {
                 val prefs = getSharedPreferences("deer_prefs", Context.MODE_PRIVATE)
                 val density = resources.displayMetrics.density
-                
+
                 val size = prefs.getInt("deer_size", 250)
                 val alphaPercent = prefs.getInt("deer_alpha", 100)
                 val savedX = prefs.getInt("saved_x", 0)
                 val savedY = prefs.getInt("saved_y", 0)
-                // ИСПРАВЛЕНО: Чтение логического флага без опечаток
-                val hasSavedPos = prefs.getBoolean("has_saved_pos", false) 
+                val hasSavedPos = prefs.getBoolean("has_saved_pos", false)
                 val gravityFlag = prefs.getInt("start_gravity_flag", Gravity.BOTTOM or Gravity.START)
 
                 val viewSizePx = (size * density).toInt()
@@ -313,8 +311,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     ).apply { setMargins(0, 0, 0, 8) }
                 }
 
-                // Временно ставим системную иконку вместо deer_frame_1
-                deerImageView?.setImageResource(android.R.drawable.ic_menu_compass)
+                deerImageView = ImageView(applicationContext).apply {
                     setBackgroundColor(Color.TRANSPARENT)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     layoutParams = LinearLayout.LayoutParams(viewSizePx, viewSizePx)
@@ -377,12 +374,12 @@ class AppService : Service(), ShakeDetector.Listener {
                     }
                 })
 
-                deerImageView?.setImageResource(R.drawable.deer_frame_1)
+                deerImageView?.setImageResource(android.R.drawable.ic_menu_compass)
                 windowManager.addView(containerView, params)
 
                 val targetYDelta = viewSizePx * 1.0f
                 containerView?.translationY = targetYDelta
-                
+
                 val appearanceAnimator = ValueAnimator.ofFloat(targetYDelta, 0f).apply {
                     duration = 550
                     interpolator = DecelerateInterpolator()
@@ -428,10 +425,9 @@ class AppService : Service(), ShakeDetector.Listener {
                     apiKey = apiKey
                 )
                 val fullPrompt = "$characterSystemPrompt\n\nКонтекстное событие: $reason"
-                
-                // Исправлено: Оборачиваем suspend-вызов в runBlocking внутри фонового треда
+
                 val response = runBlocking { generativeModel.generateContent(fullPrompt) }
-                
+
                 mainHandler.post {
                     response.text?.let { rawText ->
                         if (rawText.contains('|')) {
@@ -481,9 +477,9 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onDestroy() {
         isListening = false
         audioRecordInstance?.apply { try { stop(); release() } catch (e: Exception) {} }
-        try { 
+        try {
             val sensorManager = applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            shakeDetector?.stop(sensorManager) // Исправлено: передан менеджер сенсоров
+            shakeDetector?.stop(sensorManager)
         } catch (e: Exception) {}
         systemReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) {} }
         removeOverlay()
