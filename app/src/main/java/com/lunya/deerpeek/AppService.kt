@@ -206,7 +206,12 @@ class AppService : Service(), ShakeDetector.Listener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        startForeground(1, notification)
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ ANDROID 14+: Указываем тип сервиса явно
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     override fun onDestroy() {
