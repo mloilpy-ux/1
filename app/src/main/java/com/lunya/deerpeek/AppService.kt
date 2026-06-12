@@ -33,7 +33,9 @@ class AppService : Service(), ShakeDetector.Listener {
     private var overlayView: View? = null
     private var isShowing = false
 
-    private lateinit var shakeDetector: ShakeDetector
+    private var sensorManager: SensorManager? = null
+    private var shakeDetector: ShakeDetector? = null
+    
     private var audioRecord: AudioRecord? = null
     @Volatile private var isListening = false
     private var lastAudioPeakTime: Long = 0
@@ -45,22 +47,31 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        
+    }
+
+    // Инициализация должна происходить строго здесь, после старта Foreground режима
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 1. Сразу закрепляем сервис в памяти
         startForegroundNotification()
 
-        // Инициализация детектора тряски
-        try {
-            val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-            shakeDetector = ShakeDetector(this)
-            // Установим среднюю чувствительность (SENSITIVITY_LIGHT или SENSITIVITY_DEFAULT)
-            shakeDetector.setSensitivity(ShakeDetector.SENSITIVITY_LIGHT)
-            shakeDetector.start(sensorManager)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        // 2. Инициализируем акселерометр, только если он еще не запущен
+        if (shakeDetector == null) {
+            try {
+                sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+                shakeDetector = ShakeDetector(this)
+                shakeDetector?.setSensitivity(ShakeDetector.SENSITIVITY_LIGHT)
+                shakeDetector?.start(sensorManager!!)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
-        // Запуск микрофона
-        startSnapDetector()
+        // 3. Запускаем микрофон, если он еще не слушает
+        if (!isListening) {
+            startSnapDetector()
+        }
+
+        return START_STICKY // Заставляет систему перезапускать сервис, если его убьет нехватка ОЗУ
     }
 
     override fun hearShake() {
@@ -89,8 +100,8 @@ class AppService : Service(), ShakeDetector.Listener {
 
             Thread {
                 val buffer = ShortArray(bufferSize)
-                // Снизили порог до 12000, чтобы реагировал даже на негромкие щелчки
-                val peakThreshold = 12000 
+                // Высокая чувствительность для тестов
+                val peakThreshold = 8000 
 
                 while (isListening) {
                     val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
@@ -105,8 +116,7 @@ class AppService : Service(), ShakeDetector.Listener {
                             val currentTime = System.currentTimeMillis()
                             val timeDiff = currentTime - lastAudioPeakTime
 
-                            // Окно между щелчками: от 150 до 800 мс
-                            if (timeDiff in 150..800) {
+                            if (timeDiff in 100..900) {
                                 mainHandler.post { triggerDeerPeek() }
                                 lastAudioPeakTime = 0
                             } else {
@@ -114,8 +124,7 @@ class AppService : Service(), ShakeDetector.Listener {
                             }
                         }
                     }
-                    // Легкая разгрузка процессора
-                    Thread.sleep(10)
+                    Thread.sleep(15)
                 }
             }.start()
         } catch (e: Exception) {
@@ -130,7 +139,6 @@ class AppService : Service(), ShakeDetector.Listener {
         val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
         overlayView = inflater.inflate(R.layout.overlay_deer, null)
 
-        // КРИТИЧЕСКИЕ ФЛАГИ: Добавлен FLAG_NOT_TOUCHABLE, чтобы клики шли сквозь оверлей
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -149,8 +157,6 @@ class AppService : Service(), ShakeDetector.Listener {
         }
 
         val deerImageView = overlayView?.findViewById<ImageView>(R.id.deerImageView)
-
-        // Изначально прячем контейнер полностью за край экрана (на 600 пикселей вправо)
         overlayView?.translationX = 600f
         
         try {
@@ -160,10 +166,9 @@ class AppService : Service(), ShakeDetector.Listener {
             return
         }
 
-        // Анимация выезда
         overlayView?.animate()
             ?.translationX(0f)
-            ?.setDuration(500)
+            ?.setDuration(450)
             ?.setInterpolator(OvershootInterpolator(1.0f))
             ?.withEndAction {
                 deerImageView?.setImageResource(R.drawable.deer_waving)
@@ -174,10 +179,9 @@ class AppService : Service(), ShakeDetector.Listener {
                     wavingAnimation?.stop()
                     deerImageView?.setImageResource(R.drawable.deer_frame_1)
 
-                    // Анимация уезда назад
                     overlayView?.animate()
                         ?.translationX(600f)
-                        ?.setDuration(400)
+                        ?.setDuration(350)
                         ?.withEndAction {
                             removeOverlay()
                         }
@@ -212,7 +216,7 @@ class AppService : Service(), ShakeDetector.Listener {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Олень на страже")
-            .setContentText("Жду двойной щелчок или встряску...")
+            .setContentText("Слушаю датчики в фоне...")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -227,14 +231,9 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onDestroy() {
         isListening = false
         audioRecord?.apply {
-            try {
-                stop()
-                release()
-            } catch (e: Exception) { e.printStackTrace() }
+            try { stop(); release() } catch (e: Exception) {}
         }
-        try {
-            shakeDetector.stop()
-        } catch (e: Exception) { e.printStackTrace() }
+        try { shakeDetector?.stop() } catch (e: Exception) {}
         removeOverlay()
         super.onDestroy()
     }
