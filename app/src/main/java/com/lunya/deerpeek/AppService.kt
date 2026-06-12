@@ -191,8 +191,8 @@ class AppService : Service(), ShakeDetector.Listener {
                 windowManager.addView(overlayView, params)
                 logToFile("Оверлей выведен в ЛЕВЫЙ НИЖНИЙ угол.")
 
-                deerImageView?.setImageResource(R.drawable.deer_waving)
-                (deerImageView?.drawable as? AnimationDrawable)?.start()
+                // Загружаем напрямую чистый кадр вместо XML-анимации для проверки
+                deerImageView?.setImageResource(R.drawable.deer_frame_1)               
 
                 mainHandler.postDelayed({
                     removeOverlay()
