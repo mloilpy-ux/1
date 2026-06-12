@@ -250,16 +250,17 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     private fun setDeerDrawableByContext(command: String) {
+        // Временно используем системную иконку как фолбэк, чтобы не было Unresolved reference
         val drawableRes = when (command.trim().uppercase()) {
-            "NOIR" -> R.drawable.deer_noir    
-            "AFRAID" -> R.drawable.deer_afraid  
-            "NEON" -> R.drawable.deer_neon    
-            else -> R.drawable.deer_waving   
+            "NOIR" -> android.R.drawable.ic_menu_compass
+            "AFRAID" -> android.R.drawable.ic_menu_compass
+            "NEON" -> android.R.drawable.ic_menu_compass
+            else -> android.R.drawable.ic_menu_compass
         }
 
         try {
             deerImageView?.setImageResource(drawableRes)
-            if (drawableRes == R.drawable.deer_waving) {
+            if (drawableRes == android.R.drawable.ic_menu_compass) {
                 (deerImageView?.drawable as? AnimationDrawable)?.start()
             }
         } catch (e: Exception) {
@@ -288,7 +289,8 @@ class AppService : Service(), ShakeDetector.Listener {
                 val alphaPercent = prefs.getInt("deer_alpha", 100)
                 val savedX = prefs.getInt("saved_x", 0)
                 val savedY = prefs.getInt("saved_y", 0)
-                val hasSavedPos = prefs.putBoolean("has_saved_pos", false)
+                // ИСПРАВЛЕНО: Чтение логического флага без опечаток
+                val hasSavedPos = prefs.getBoolean("has_saved_pos", false) 
                 val gravityFlag = prefs.getInt("start_gravity_flag", Gravity.BOTTOM or Gravity.START)
 
                 val viewSizePx = (size * density).toInt()
@@ -311,7 +313,8 @@ class AppService : Service(), ShakeDetector.Listener {
                     ).apply { setMargins(0, 0, 0, 8) }
                 }
 
-                deerImageView = ImageView(applicationContext).apply {
+                // Временно ставим системную иконку вместо deer_frame_1
+                deerImageView?.setImageResource(android.R.drawable.ic_menu_compass)
                     setBackgroundColor(Color.TRANSPARENT)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     layoutParams = LinearLayout.LayoutParams(viewSizePx, viewSizePx)
