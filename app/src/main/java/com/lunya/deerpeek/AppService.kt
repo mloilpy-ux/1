@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
@@ -57,11 +58,9 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        logToFile("=== СЕРВИС СОЗДАН ===")
+        logToFile("=== СЕРВИС НАЧАЛ РАБОТУ ===")
         
-        // ТЕСТ: Принудительно вызываем оленя при старте, чтобы проверить работоспособность окна
         mainHandler.postDelayed({
-            logToFile("Запуск стартового теста отрисовки...")
             triggerDeerPeek()
         }, 500)
     }
@@ -70,7 +69,7 @@ class AppService : Service(), ShakeDetector.Listener {
         startForegroundNotification()
         
         if (intent?.action == "FORCE_PEEK") {
-            logToFile("Ручной триггер FORCE_PEEK из MainActivity.")
+            logToFile("Ручной триггер из UI.")
             triggerDeerPeek()
         }
 
@@ -81,9 +80,9 @@ class AppService : Service(), ShakeDetector.Listener {
                     setSensitivity(ShakeDetector.SENSITIVITY_HARD)
                     start(sensorManager)
                 }
-                logToFile("Датчик акселерометра успешно подключен.")
+                logToFile("Датчик акселерометра активен.")
             } catch (e: Exception) {
-                logToFile("Ошибка инициализации акселерометра: ${e.localizedMessage}")
+                logToFile("Ошибка акселерометра: ${e.localizedMessage}")
             }
         }
 
@@ -95,7 +94,7 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     override fun hearShake() {
-        logToFile("Событие датчика: зафиксирована тряска!")
+        logToFile("Датчик: Тряска.")
         triggerDeerPeek()
     }
 
@@ -107,10 +106,7 @@ class AppService : Service(), ShakeDetector.Listener {
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             
-            if (bufferSize <= 0) {
-                logToFile("Ошибка аудио: некорректный размер буфера.")
-                return@Thread
-            }
+            if (bufferSize <= 0) return@Thread
 
             try {
                 audioRecord = AudioRecord(
@@ -122,13 +118,13 @@ class AppService : Service(), ShakeDetector.Listener {
                 )
 
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    logToFile("Микрофон заблокирован системой или другим приложением.")
+                    logToFile("Микрофон занят. Изолированное ожидание.")
                     return@Thread
                 }
 
                 isListening = true
                 audioRecord?.startRecording()
-                logToFile("Аудиопоток успешно запущен в фоновом режиме.")
+                logToFile("Поток аудио успешно запущен.")
 
                 val buffer = ShortArray(bufferSize)
                 while (isListening) {
@@ -153,12 +149,13 @@ class AppService : Service(), ShakeDetector.Listener {
                     Thread.sleep(10)
                 }
             } catch (e: Exception) {
-                logToFile("Сбой в потоке аудио: ${e.localizedMessage}")
+                logToFile("Исключение аудиопотока: ${e.localizedMessage}")
                 isListening = false
             }
         }.start()
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun triggerDeerPeek() {
         mainHandler.post {
             if (isShowing) return@post
@@ -176,7 +173,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     (250 * density).toInt(), 
                     (300 * density).toInt(),
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.BOTTOM or Gravity.START
@@ -184,8 +181,37 @@ class AppService : Service(), ShakeDetector.Listener {
                     y = 0
                 }
 
+                // Интегрируем обработку перемещения пальцем (Drag and Drop)
+                deerImageView?.setOnTouchListener(object : View.OnTouchListener {
+                    private var initialX = 0
+                    private var initialY = 0
+                    private var initialTouchX = 0f
+                    private var initialTouchY = 0f
+
+                    override fun onTouch(v: View, event: MotionEvent): Boolean {
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                initialX = params.x
+                                initialY = params.y
+                                initialTouchX = event.rawX
+                                initialTouchY = event.rawY
+                                return true
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                params.x = initialX + (event.rawX - initialTouchX).toInt()
+                                params.y = initialY - (event.rawY - initialTouchY).toInt() // Инверсия Y для BOTTOM-гравитации
+                                try {
+                                    windowManager.updateViewLayout(deerImageView, params)
+                                } catch (e: Exception) {}
+                                return true
+                            }
+                        }
+                        return false
+                    }
+                })
+
                 windowManager.addView(deerImageView, params)
-                logToFile("Окно успешно выведено на экран системы.")
+                logToFile("Оверлей отрисован (Левый угол, включен интерактив).")
 
                 try {
                     deerImageView?.setImageResource(R.drawable.deer_waving)
@@ -196,7 +222,7 @@ class AppService : Service(), ShakeDetector.Listener {
                         deerImageView?.setImageResource(R.drawable.deer_frame_1)
                     }
                 } catch (resException: Exception) {
-                    logToFile("Ресурсы изображений недоступны: ${resException.localizedMessage}")
+                    logToFile("Ресурсы графики недоступны: ${resException.localizedMessage}")
                 }
 
                 mainHandler.postDelayed({
@@ -213,7 +239,7 @@ class AppService : Service(), ShakeDetector.Listener {
         if (deerImageView != null) {
             try {
                 windowManager.removeView(deerImageView)
-                logToFile("Окно успешно удалено с экрана.")
+                logToFile("Оверлей удален.")
             } catch (e: Exception) {}
             deerImageView = null
         }
@@ -227,8 +253,8 @@ class AppService : Service(), ShakeDetector.Listener {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("Олень на страже")
-            .setContentText("Служба активна")
+            .setContentTitle("Олень")
+            .setContentText("Сервис запущен")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
         
