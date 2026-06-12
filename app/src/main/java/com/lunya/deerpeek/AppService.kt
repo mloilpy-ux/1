@@ -57,14 +57,20 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        logToFile("=== СЕРВИС СОЗДАН ИЗАПУЩЕН ===")
+        logToFile("=== СЕРВИС СОЗДАН ===")
+        
+        // ТЕСТ: Принудительно вызываем оленя при старте, чтобы проверить работоспособность окна
+        mainHandler.postDelayed({
+            logToFile("Запуск стартового теста отрисовки...")
+            triggerDeerPeek()
+        }, 500)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundNotification()
         
         if (intent?.action == "FORCE_PEEK") {
-            logToFile("Ручной триггер FORCE_PEEK.")
+            logToFile("Ручной триггер FORCE_PEEK из MainActivity.")
             triggerDeerPeek()
         }
 
@@ -75,9 +81,9 @@ class AppService : Service(), ShakeDetector.Listener {
                     setSensitivity(ShakeDetector.SENSITIVITY_HARD)
                     start(sensorManager)
                 }
-                logToFile("Акселерометр запущен успешно.")
+                logToFile("Датчик акселерометра успешно подключен.")
             } catch (e: Exception) {
-                logToFile("Ошибка акселерометра: ${e.localizedMessage}")
+                logToFile("Ошибка инициализации акселерометра: ${e.localizedMessage}")
             }
         }
 
@@ -89,7 +95,7 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     override fun hearShake() {
-        logToFile("Датчик: Тряска корпуса.")
+        logToFile("Событие датчика: зафиксирована тряска!")
         triggerDeerPeek()
     }
 
@@ -101,7 +107,10 @@ class AppService : Service(), ShakeDetector.Listener {
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             
-            if (bufferSize <= 0) return@Thread
+            if (bufferSize <= 0) {
+                logToFile("Ошибка аудио: некорректный размер буфера.")
+                return@Thread
+            }
 
             try {
                 audioRecord = AudioRecord(
@@ -113,13 +122,13 @@ class AppService : Service(), ShakeDetector.Listener {
                 )
 
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    logToFile("Микрофон монополизирован другой программой. Ожидание.")
+                    logToFile("Микрофон заблокирован системой или другим приложением.")
                     return@Thread
                 }
 
                 isListening = true
                 audioRecord?.startRecording()
-                logToFile("Аудиопоток MIC успешно инициализирован.")
+                logToFile("Аудиопоток успешно запущен в фоновом режиме.")
 
                 val buffer = ShortArray(bufferSize)
                 while (isListening) {
@@ -144,7 +153,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     Thread.sleep(10)
                 }
             } catch (e: Exception) {
-                logToFile("Изолированное исключение аудио: ${e.localizedMessage}")
+                logToFile("Сбой в потоке аудио: ${e.localizedMessage}")
                 isListening = false
             }
         }.start()
@@ -158,7 +167,6 @@ class AppService : Service(), ShakeDetector.Listener {
             try {
                 val density = resources.displayMetrics.density
                 
-                // Создаем ImageView программно, полностью игнорируя XML файлы
                 deerImageView = ImageView(applicationContext).apply {
                     setBackgroundColor(Color.TRANSPARENT)
                     scaleType = ImageView.ScaleType.FIT_CENTER
@@ -171,22 +179,20 @@ class AppService : Service(), ShakeDetector.Listener {
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                     PixelFormat.TRANSLUCENT
                 ).apply {
-                    gravity = Gravity.BOTTOM or Gravity.START // Строго левый нижний угол
+                    gravity = Gravity.BOTTOM or Gravity.START
                     x = 0
                     y = 0
                 }
 
                 windowManager.addView(deerImageView, params)
-                logToFile("Оверлей добавлен: Левый нижний угол, фон прозрачный.")
+                logToFile("Окно успешно выведено на экран системы.")
 
-                // Проверяем наличие анимации или ставим первый кадр
                 try {
                     deerImageView?.setImageResource(R.drawable.deer_waving)
                     val wavingAnimation = deerImageView?.drawable as? AnimationDrawable
                     if (wavingAnimation != null) {
                         wavingAnimation.start()
                     } else {
-                        // Фолбэк на статический первый кадр, если анимация не собралась
                         deerImageView?.setImageResource(R.drawable.deer_frame_1)
                     }
                 } catch (resException: Exception) {
@@ -197,7 +203,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     removeOverlay()
                 }, 3000)
             } catch (e: Exception) {
-                logToFile("Критическая ошибка WindowManager: ${e.localizedMessage}")
+                logToFile("Ошибка WindowManager addView: ${e.localizedMessage}")
                 isShowing = false
             }
         }
@@ -207,7 +213,7 @@ class AppService : Service(), ShakeDetector.Listener {
         if (deerImageView != null) {
             try {
                 windowManager.removeView(deerImageView)
-                logToFile("Оверлей успешно удален.")
+                logToFile("Окно успешно удалено с экрана.")
             } catch (e: Exception) {}
             deerImageView = null
         }
@@ -221,8 +227,8 @@ class AppService : Service(), ShakeDetector.Listener {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("Олень")
-            .setContentText("Активен (Левый угол, без фона)")
+            .setContentTitle("Олень на страже")
+            .setContentText("Служба активна")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
         
