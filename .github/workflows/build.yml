@@ -18,7 +18,10 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    # Этот шаг автоматически сгенерирует правильный gradlew прямо на сервере GitHub
+    - name: Generate Gradle Wrapper
+      run: gradle wrapper --gradle-version 8.2
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
