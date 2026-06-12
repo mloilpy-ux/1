@@ -1,5 +1,6 @@
 package com.lunya.deerpeek
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -25,6 +26,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import com.squareup.seismic.ShakeDetector
@@ -41,16 +43,14 @@ class AppService : Service(), ShakeDetector.Listener {
     private var deerImageView: ImageView? = null
     private var isShowing = false
     private var shakeDetector: ShakeDetector? = null
-    private var audioRecord: AudioRecord? = null
+    private var audioRecord: NullableAudioRecord? = null
+    private var audioRecordInstance: AudioRecord? = null
     @Volatile private var isListening = false
     private var lastAudioPeakTime: Long = 0
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Таймер защиты от спама датчиков
     private var lastTriggerTime: Long = 0
-    private val cooldownMillis = 4000L
-
-    // Приемник системных событий (зарядка, наушники, батарея)
+    private val cooldownMillis = 3500L
     private var systemReceiver: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -68,27 +68,16 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        logToFile("=== СЕРВИС РАСШИРЕН И ЗАПУЩЕН ===")
-        
+        logToFile("=== ЗАПУСК СЛУЖБЫ С АНИМАЦИЕЙ ВЫЕЗДА ===")
         registerSystemTriggers()
-        
-        mainHandler.postDelayed({
-            triggerDeerPeek(isSystemEvent = true)
-        }, 500)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundNotification()
         
         when (intent?.action) {
-            "FORCE_PEEK" -> {
-                logToFile("Триггер: Ручной запуск из UI.")
-                triggerDeerPeek(isSystemEvent = false, force = true)
-            }
-            "UPDATE_SETTINGS" -> {
-                logToFile("Настройки изменены пользователем. Применение на лету.")
-                applyLiveSettings()
-            }
+            "FORCE_PEEK" -> triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true)
+            "UPDATE_SETTINGS" -> applyLiveSettings()
         }
 
         if (shakeDetector == null) {
@@ -98,7 +87,6 @@ class AppService : Service(), ShakeDetector.Listener {
                     setSensitivity(ShakeDetector.SENSITIVITY_HARD)
                     start(sensorManager)
                 }
-                logToFile("Датчик акселерометра инициализирован.")
             } catch (e: Exception) {
                 logToFile("Ошибка акселерометра: ${e.localizedMessage}")
             }
@@ -112,8 +100,8 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     override fun hearShake() {
-        logToFile("Триггер датчика: Встряска корпуса телефона.")
-        triggerDeerPeek(isSystemEvent = false)
+        logToFile("Триггер: Тряска корпуса. Полный выезд.")
+        triggerDeerPeek(peekType = PeekType.FULL_WAVING)
     }
 
     private fun applyLiveSettings() {
@@ -139,24 +127,17 @@ class AppService : Service(), ShakeDetector.Listener {
         systemReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_POWER_CONNECTED -> {
-                        logToFile("Системное событие: Подключено зарядное устройство.")
-                        triggerDeerPeek(isSystemEvent = true)
-                    }
+                    Intent.ACTION_POWER_CONNECTED -> triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
                     Intent.ACTION_HEADSET_PLUG -> {
-                        val state = intent.getIntExtra("state", -1)
-                        if (state == 1) {
-                            logToFile("Системное событие: Наушники подключены.")
-                            triggerDeerPeek(isSystemEvent = true)
+                        if (intent.getIntExtra("state", -1) == 1) {
+                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
                         }
                     }
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                        val batteryPct = level * 100 / scale.toFloat()
-                        if (batteryPct <= 15f && batteryPct > 14f) { // Сработает один раз при падении до 15%
-                            logToFile("Системное событие: Низкий уровень заряда батареи ($level%).")
-                            triggerDeerPeek(isSystemEvent = true)
+                        if (level * 100 / scale.toFloat() <= 15f) {
+                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
                         }
                     }
                 }
@@ -177,11 +158,10 @@ class AppService : Service(), ShakeDetector.Listener {
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-            
             if (bufferSize <= 0) return@Thread
 
             try {
-                audioRecord = AudioRecord(
+                audioRecordInstance = AudioRecord(
                     MediaRecorder.AudioSource.VOICE_RECOGNITION, 
                     sampleRate, 
                     channelConfig, 
@@ -189,56 +169,77 @@ class AppService : Service(), ShakeDetector.Listener {
                     bufferSize
                 )
 
-                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    logToFile("Микрофон занят. Изолированное ожидание аудиопотока.")
+                if (audioRecordInstance?.state != AudioRecord.STATE_INITIALIZED) {
+                    logToFile("Микрофон монополизирован сторонним софтом.")
                     return@Thread
                 }
 
                 isListening = true
-                audioRecord?.startRecording()
-                logToFile("Аудиомониторинг успешно запущен.")
+                audioRecordInstance?.startRecording()
 
                 val buffer = ShortArray(bufferSize)
                 while (isListening) {
                     val prefs = getSharedPreferences("deer_prefs", Context.MODE_PRIVATE)
                     val threshold = prefs.getInt("mic_threshold", 3000)
 
-                    val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    val readSize = audioRecordInstance?.read(buffer, 0, buffer.size) ?: 0
                     if (readSize > 0) {
                         var maxAmp = 0
                         for (i in 0 until readSize) {
                             val v = abs(buffer[i].toInt())
                             if (v > maxAmp) maxAmp = v
                         }
+                        
                         if (maxAmp > threshold) {
                             val now = System.currentTimeMillis()
                             val diff = now - lastAudioPeakTime
-                            if (diff in 50..1000) {
-                                lastAudioPeakTime = 0
-                                mainHandler.post { triggerDeerPeek(isSystemEvent = false) }
-                            } else {
+                            
+                            if (lastAudioPeakTime == 0L) {
+                                // Первый щелчок / одиночный звук: реагируем мгновенно легким выглядыванием
                                 lastAudioPeakTime = now
+                                mainHandler.post { triggerDeerPeek(peekType = PeekType.SHORT_LOOK) }
+                            } else if (diff in 50..1000) {
+                                // Успешный двойной щелчок: олень понимает команду и машет лапой
+                                lastAudioPeakTime = 0
+                                mainHandler.post { triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true) }
+                            } else if (diff > 1000) {
+                                lastAudioPeakTime = now
+                                mainHandler.post { triggerDeerPeek(peekType = PeekType.SHORT_LOOK) }
                             }
                         }
                     }
                     Thread.sleep(10)
                 }
             } catch (e: Exception) {
-                logToFile("Исключение аудиомониторинга: ${e.localizedMessage}")
                 isListening = false
             }
         }.start()
     }
 
+    enum class PeekType {
+        SHORT_LOOK,   // Слегка приподнимается (реакция на шум/одиночный клик)
+        FULL_WAVING   // Выезжает полностью и машет (двойной щелчок/тряска)
+    }
+
     @SuppressLint("ClickableViewAccessibility")
-    private fun triggerDeerPeek(isSystemEvent: Boolean, force: Boolean = false) {
+    private fun triggerDeerPeek(peekType: PeekType, force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!force && (now - lastTriggerTime < cooldownMillis)) {
-            return // Защита от спама и дребезга датчиков активна
+        if (!force && (now - lastTriggerTime < cooldownMillis) && peekType == PeekType.SHORT_LOOK) {
+            return 
         }
 
         mainHandler.post {
-            if (isShowing) return@post
+            // Если олень уже на экране и регистрируется повторный двойной щелчок — переключаем текстуру на анимацию махания
+            if (isShowing) {
+                if (peekType == PeekType.FULL_WAVING) {
+                    try {
+                        deerImageView?.setImageResource(R.drawable.deer_waving)
+                        (deerImageView?.drawable as? AnimationDrawable)?.start()
+                    } catch (e: Exception) {}
+                }
+                return@post
+            }
+
             isShowing = true
             lastTriggerTime = now
 
@@ -253,6 +254,8 @@ class AppService : Service(), ShakeDetector.Listener {
                 val hasSavedPos = prefs.getBoolean("has_saved_pos", false)
                 val gravityFlag = prefs.getInt("start_gravity_flag", Gravity.BOTTOM or Gravity.START)
 
+                val viewSizePx = (size * density).toInt()
+
                 deerImageView = ImageView(applicationContext).apply {
                     setBackgroundColor(Color.TRANSPARENT)
                     scaleType = ImageView.ScaleType.FIT_CENTER
@@ -260,29 +263,23 @@ class AppService : Service(), ShakeDetector.Listener {
                 }
 
                 val params = WindowManager.LayoutParams(
-                    (size * density).toInt(), 
-                    (size * density).toInt(),
+                    viewSizePx, viewSizePx,
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = gravityFlag
-                    if (hasSavedPos) {
-                        x = savedX
-                        y = savedY
-                    } else {
-                        x = 0
-                        y = 0
-                    }
+                    x = if (hasSavedPos) savedX else 0
+                    y = if (hasSavedPos) savedY else 0
                 }
 
-                // Интерактивное перемещение + Тап-реакция
+                // Интерактив таскания
                 deerImageView?.setOnTouchListener(object : View.OnTouchListener {
                     private var initialX = 0
                     private var initialY = 0
                     private var initialTouchX = 0f
                     private var initialTouchY = 0f
-                    private var isMoveAction = false
+                    private var isMove = false
 
                     override fun onTouch(v: View, event: MotionEvent): Boolean {
                         when (event.action) {
@@ -291,40 +288,27 @@ class AppService : Service(), ShakeDetector.Listener {
                                 initialY = params.y
                                 initialTouchX = event.rawX
                                 initialTouchY = event.rawY
-                                isMoveAction = false
+                                isMove = false
                                 return true
                             }
                             MotionEvent.ACTION_MOVE -> {
-                                val dx = abs(event.rawX - initialTouchX)
-                                val dy = abs(event.rawY - initialTouchY)
-                                if (dx > 10 || dy > 10) {
-                                    isMoveAction = true
+                                if (abs(event.rawX - initialTouchX) > 10 || abs(event.rawY - initialTouchY) > 10) {
+                                    isMove = true
                                     params.x = initialX + (event.rawX - initialTouchX).toInt()
-                                    // Корректировка направления Y в зависимости от верхнего/нижнего Gravity
                                     if ((gravityFlag and Gravity.BOTTOM) == Gravity.BOTTOM) {
                                         params.y = initialY - (event.rawY - initialTouchY).toInt()
                                     } else {
                                         params.y = initialY + (event.rawY - initialTouchY).toInt()
                                     }
-                                    try {
-                                        windowManager.updateViewLayout(deerImageView, params)
-                                    } catch (e: Exception) {}
+                                    try { windowManager.updateViewLayout(deerImageView, params) } catch (e: Exception) {}
                                 }
                                 return true
                             }
                             MotionEvent.ACTION_UP -> {
-                                if (isMoveAction) {
-                                    // Сохраняем финальные координаты после перемещения
-                                    prefs.edit()
-                                        .putInt("saved_x", params.x)
-                                        .putInt("saved_y", params.y)
-                                        .putBoolean("has_saved_pos", true)
-                                        .apply()
-                                    logToFile("Координаты оверлея сохранены: X=${params.x}, Y=${params.y}")
+                                if (isMove) {
+                                    prefs.edit().putInt("saved_x", params.x).putInt("saved_y", params.y).putBoolean("has_saved_pos", true).apply()
                                 } else {
-                                    // ТАП-РЕАКЦИЯ: Пользователь просто кликнул на оленя
-                                    logToFile("Интерактив: Одиночный клик пользователя по оверлею.")
-                                    executeTapReaction()
+                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true)
                                 }
                                 return true
                             }
@@ -333,43 +317,62 @@ class AppService : Service(), ShakeDetector.Listener {
                     }
                 })
 
-                windowManager.addView(deerImageView, params)
-
-                // Разделение анимаций по типам событий
+                // Выбор стартового кадра/анимации в зависимости от типа шума
                 try {
-                    if (isSystemEvent) {
-                        // Если сработало системное событие, можно ставить альтернативный кадр/анимацию
-                        deerImageView?.setImageResource(R.drawable.deer_frame_1) 
+                    if (peekType == PeekType.SHORT_LOOK) {
+                        deerImageView?.setImageResource(R.drawable.deer_frame_1) // Одиночный шум — просто настороженный первый кадр
                     } else {
                         deerImageView?.setImageResource(R.drawable.deer_waving)
                         (deerImageView?.drawable as? AnimationDrawable)?.start()
                     }
-                } catch (resException: Exception) {
+                } catch (e: Exception) {
                     deerImageView?.setImageResource(android.R.drawable.ic_menu_compass)
                 }
 
+                windowManager.addView(deerImageView, params)
+
+                // Рассчитываем высоту подъема анимации
+                val targetYDelta = if (peekType == PeekType.SHORT_LOOK) viewSizePx * 0.35f else viewSizePx * 1.0f
+                
+                // Инициализируем аниматор перевода координат (выезд из самого низа экрана)
+                deerImageView?.translationY = targetYDelta
+                
+                val appearanceAnimator = ValueAnimator.ofFloat(targetYDelta, 0f).apply {
+                    duration = 550
+                    interpolator = DecelerateInterpolator()
+                    addUpdateListener { animator ->
+                        val value = animator.animatedValue as Float
+                        deerImageView?.translationY = value
+                    }
+                }
+                appearanceAnimator.start()
+
+                // Таймер ухода обратно под экран
                 mainHandler.postDelayed({
-                    removeOverlay()
-                }, 3000)
+                    val disappearanceAnimator = ValueAnimator.ofFloat(0f, targetYDelta).apply {
+                        duration = 450
+                        interpolator = DecelerateInterpolator()
+                        addUpdateListener { animator ->
+                            val value = animator.animatedValue as Float
+                            deerImageView?.translationY = value
+                        }
+                    }
+                    disappearanceAnimator.start()
+
+                    mainHandler.postDelayed({
+                        removeOverlay()
+                    }, 460)
+                }, 2500)
+
             } catch (e: Exception) {
-                logToFile("Ошибка WindowManager addView: ${e.localizedMessage}")
                 isShowing = false
             }
         }
     }
 
-    private fun executeTapReaction() {
-        // Короткий визуальный отклик при тапе: например, подмигивание или быстрая смена кадров
-        try {
-            deerImageView?.setImageResource(R.drawable.deer_frame_1)
-        } catch (e: Exception) {}
-    }
-
     private fun removeOverlay() {
         if (deerImageView != null) {
-            try {
-                windowManager.removeView(deerImageView)
-            } catch (e: Exception) {}
+            try { windowManager.removeView(deerImageView) } catch (e: Exception) {}
             deerImageView = null
         }
         isShowing = false
@@ -383,20 +386,15 @@ class AppService : Service(), ShakeDetector.Listener {
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle("Олень")
-            .setContentText("Режим максимальной производительности")
+            .setContentText("Кинематическая отрисовка включена")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(1, notification)
-        }
+        startForeground(1, notification)
     }
 
     override fun onDestroy() {
         isListening = false
-        audioRecord?.apply { try { stop(); release() } catch (e: Exception) {} }
+        audioRecordInstance?.apply { try { stop(); release() } catch (e: Exception) {} }
         try { shakeDetector?.stop() } catch (e: Exception) {}
         systemReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) {} }
         removeOverlay()
