@@ -17,7 +17,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -28,8 +27,6 @@ import com.squareup.seismic.ShakeDetector
 import kotlin.math.abs
 
 class AppService : Service(), ShakeDetector.Listener {
-
-    private val TAG = "DEER_DEBUG"
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -44,56 +41,57 @@ class AppService : Service(), ShakeDetector.Listener {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    override fun onBind(intent: Intent?): IBinder? {
-        Log.d(TAG, "onBind вызван")
-        return null
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun sendLogToActivity(msg: String) {
+        val intent = Intent("com.lunya.deerpeek.LOG_BROADCAST").apply {
+            putExtra("log_msg", msg)
+        }
+        sendBroadcast(intent)
     }
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "onCreate: Инициализация сервиса")
         try {
-            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            Log.d(TAG, "onCreate: WindowManager успешно получен")
+            windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            mainHandler.postDelayed({ sendLogToActivity("Сервис: метод onCreate() отработал успешно.") }, 200)
         } catch (e: Exception) {
-            Log.e(TAG, "onCreate: Ошибка получения WindowManager", e)
+            mainHandler.postDelayed({ sendLogToActivity("Сервис ОШИБКА onCreate: ${e.localizedMessage}") }, 200)
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand: Сервис запускается, flags=$flags, startId=$startId")
-        
         startForegroundNotification()
+        sendLogToActivity("Сервис: Метод onStartCommand запущен.")
 
-        // Настройка акселерометра
-        if (shakeDetector == null) {
-            try {
-                Log.d(TAG, "onStartCommand: Настройка детектора тряски...")
-                sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-                shakeDetector = ShakeDetector(this)
-                shakeDetector?.setSensitivity(ShakeDetector.SENSITIVITY_HARD)
-                shakeDetector?.start(sensorManager!!)
-                Log.d(TAG, "onStartCommand: ShakeDetector успешно запущен с максимальной чувствительностью")
-            } catch (e: Exception) {
-                Log.e(TAG, "onStartCommand: Сбой при запуске ShakeDetector", e)
+        // Настройка детектора тряски
+        try {
+            if (shakeDetector != null) {
+                shakeDetector?.stop()
+                sendLogToActivity("Сервис: Предыдущий ShakeDetector остановлен.")
             }
-        } else {
-            Log.d(TAG, "onStartCommand: ShakeDetector уже существует, повторный запуск пропущен")
+            sensorManager = applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            shakeDetector = ShakeDetector(this)
+            shakeDetector?.setSensitivity(ShakeDetector.SENSITIVITY_HARD)
+            shakeDetector?.start(sensorManager!!)
+            sendLogToActivity("Сервис: ShakeDetector успешно инициализирован.")
+        } catch (e: Exception) {
+            sendLogToActivity("Сервис СБОЙ АКСЕЛЕРОМЕТРА: ${e.localizedMessage}")
         }
 
         // Настройка микрофона
         if (!isListening) {
-            Log.d(TAG, "onStartCommand: Запуск потока детектора щелчков...")
+            sendLogToActivity("Сервис: Запуск детектора микрофона...")
             startSnapDetector()
         } else {
-            Log.d(TAG, "onStartCommand: Поток детектора щелчков уже активен")
+            sendLogToActivity("Сервис: Детектор микрофона уже работал.")
         }
 
         return START_STICKY
     }
 
     override fun hearShake() {
-        Log.d(TAG, "hearShake: Зафиксировано событие тряски от Seismic!")
+        sendLogToActivity("ДАТЧИК: Зафиксирована ТРЯСКА корпуса!")
         mainHandler.post { triggerDeerPeek() }
     }
 
@@ -104,10 +102,10 @@ class AppService : Service(), ShakeDetector.Listener {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-        Log.d(TAG, "startSnapDetector: Минимальный размер буфера аудио = $bufferSize")
+        sendLogToActivity("МИКРОФОН: Системный размер буфера = $bufferSize")
 
         if (bufferSize <= 0) {
-            Log.e(TAG, "startSnapDetector: Некорректный размер буфера, остановка инициализации")
+            sendLogToActivity("МИКРОФОН ОШИБКА: Некорректный размер буфера.")
             return
         }
 
@@ -118,18 +116,18 @@ class AppService : Service(), ShakeDetector.Listener {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "startSnapDetector: AudioRecord не смог инициализироваться. Проверь разрешения!")
+                sendLogToActivity("МИКРОФОН ОШИБКА: AudioRecord не инициализирован (state != INITIALIZED).")
                 return
             }
 
             isListening = true
             audioRecord?.startRecording()
-            Log.d(TAG, "startSnapDetector: Запись с микрофона успешно запущена, вход в цикл обработки")
+            sendLogToActivity("МИКРОФОН: Запись успешно активирована.")
 
             Thread {
                 val buffer = ShortArray(bufferSize)
-                val peakThreshold = 4000 
-                Log.d(TAG, "AudioThread: Фоновый поток аудио запущен. Порог пика = $peakThreshold")
+                val peakThreshold = 3000 
+                var reportCounter = 0
 
                 while (isListening) {
                     val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
@@ -140,106 +138,101 @@ class AppService : Service(), ShakeDetector.Listener {
                             if (value > maxAmplitude) maxAmplitude = value
                         }
 
-                        // Логируем только значительные всплески звука, чтобы не спамить логгер шумом
-                        if (maxAmplitude > 1500) {
-                            Log.v(TAG, "AudioThread: Текущая амплитуда = $maxAmplitude")
-                        }
-
+                        // Периодически шлем статус, что поток жив и слушает
                         if (maxAmplitude > peakThreshold) {
                             val currentTime = System.currentTimeMillis()
                             val timeDiff = currentTime - lastAudioPeakTime
-                            Log.d(TAG, "AudioThread: Превышен порог! Амплитуда=$maxAmplitude, Интервал с прошлого пика=${timeDiff}мс")
+                            mainHandler.post { sendLogToActivity("ЗВУК: Пик! Амплитуда=$maxAmplitude, интервал=${timeDiff}мс") }
 
                             if (timeDiff in 50..1000) {
-                                Log.i(TAG, "AudioThread: УСПЕХ! Зафиксирован двойной щелчок. Вызов отрисовки.")
+                                mainHandler.post { sendLogToActivity("ЗВУК УСПЕХ: Двойной щелчок распознан!") }
                                 mainHandler.post { triggerDeerPeek() }
                                 lastAudioPeakTime = 0
                             } else {
-                                Log.d(TAG, "AudioThread: Первый одиночный пик зафиксирован. Ждем второй.")
                                 lastAudioPeakTime = currentTime
                             }
                         }
                     } else {
-                        Log.w(TAG, "AudioThread: Ошибка чтения аудио данных, readSize=$readSize")
+                        reportCounter++
+                        if (reportCounter % 200 == 0) {
+                            mainHandler.post { sendLogToActivity("МИКРОФОН ПРЕДУПРЕЖДЕНИЕ: Ошибка члния данных, код=$readSize") }
+                        }
                     }
                     Thread.sleep(10)
                 }
-                Log.d(TAG, "AudioThread: Выход из фонового потока аудио")
             }.start()
         } catch (e: Exception) {
-            Log.e(TAG, "startSnapDetector: Исключение в аудио-треде", e)
+            val err = e.localizedMessage ?: "Unknown Error"
+            mainHandler.post { sendLogToActivity("МИКРОФОН КРИТИЧЕСКИЙ СБОЙ ПОТОКА: $err") }
         }
     }
 
     private fun triggerDeerPeek() {
-        Log.d(TAG, "triggerDeerPeek: Попытка вызвать оверлей. Текущий статус видимости isShowing=$isShowing")
-        if (isShowing) return
-        isShowing = true
+        mainHandler.post {
+            sendLogToActivity("ОТРИСОВКА: Запрос вывода оверлея. Статус отображения isShowing=$isShowing")
+            if (isShowing) return@post
+            isShowing = true
 
-        try {
-            val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
-            overlayView = inflater.inflate(R.layout.overlay_deer, null)
-            Log.d(TAG, "triggerDeerPeek: Разметка overlay_deer успешно инфлейтнута")
+            try {
+                val inflater = applicationContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
+                overlayView = inflater.inflate(R.layout.overlay_deer, null)
 
-            val density = resources.displayMetrics.density
-            val widthPx = (250 * density).toInt()
-            val heightPx = (300 * density).toInt()
-            Log.d(TAG, "triggerDeerPeek: Размеры контейнера в пикселях: ${widthPx}x${heightPx} (плотность=$density)")
+                val density = resources.displayMetrics.density
+                val widthPx = (250 * density).toInt()
+                val heightPx = (300 * density).toInt()
 
-            val params = WindowManager.LayoutParams(
-                widthPx,
-                heightPx,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
-                else 
-                    WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
-                x = 0
-                y = 0 
+                val params = WindowManager.LayoutParams(
+                    widthPx,
+                    heightPx,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
+                    else 
+                        WindowManager.LayoutParams.TYPE_PHONE,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.END
+                    x = 0
+                    y = 0 
+                }
+
+                val deerImageView = overlayView?.findViewById<ImageView>(R.id.deerImageView)
+                if (deerImageView == null) {
+                    sendLogToActivity("ОТРИСОВКА ОШИБКА: deerImageView не найден в XML разметке!")
+                }
+                
+                windowManager.addView(overlayView, params)
+                sendLogToActivity("ОТРИСОВКА: Окно оверлея успешно добавлено в WindowManager системы.")
+                
+                deerImageView?.setImageResource(R.drawable.deer_waving)
+                val wavingAnimation = deerImageView?.drawable as? AnimationDrawable
+                if (wavingAnimation != null) {
+                    wavingAnimation.start()
+                    sendLogToActivity("ОТРИСОВКА: Анимация махания запущена.")
+                } else {
+                    sendLogToActivity("ОТРИСОВКА ПРЕДУПРЕЖДЕНИЕ: Не удалось запустить AnimationDrawable.")
+                }
+
+                mainHandler.postDelayed({
+                    wavingAnimation?.stop()
+                    removeOverlay()
+                }, 3000)
+
+            } catch (e: Exception) {
+                sendLogToActivity("ОТРИСОВКА КРИТИЧЕСКИЙ СБОЙ WINDOW_MANAGER: ${e.localizedMessage}")
+                isShowing = false
             }
-
-            val deerImageView = overlayView?.findViewById<ImageView>(R.id.deerImageView)
-            if (deerImageView == null) {
-                Log.e(TAG, "triggerDeerPeek: Ошибка! В разметке не найден deerImageView")
-            }
-
-            Log.d(TAG, "triggerDeerPeek: Вызов windowManager.addView()...")
-            windowManager.addView(overlayView, params)
-            Log.i(TAG, "triggerDeerPeek: Окно оверлея успешно добавлено на экран системы")
-            
-            deerImageView?.setImageResource(R.drawable.deer_waving)
-            val wavingAnimation = deerImageView?.drawable as? AnimationDrawable
-            if (wavingAnimation != null) {
-                wavingAnimation.start()
-                Log.d(TAG, "triggerDeerPeek: Циклическая анимация махания лапкой запущена")
-            } else {
-                Log.w(TAG, "triggerDeerPeek: Предупреждение! Ресурс deer_waving не распознан как AnimationDrawable")
-            }
-
-            mainHandler.postDelayed({
-                Log.d(TAG, "triggerDeerPeek: Время отображения вышло. Запуск удаления.")
-                wavingAnimation?.stop()
-                removeOverlay()
-            }, 3000)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "triggerDeerPeek: Критическая ошибка при отрисовке окна оверлея", e)
-            isShowing = false
         }
     }
 
     private fun removeOverlay() {
-        Log.d(TAG, "removeOverlay: Запрос удаления окна. overlayView существует=${overlayView != null}")
         if (overlayView != null) {
             try {
                 windowManager.removeView(overlayView)
-                Log.i(TAG, "removeOverlay: Окно оверлея успешно удалено из WindowManager")
+                sendLogToActivity("ОТРИСОВКА: Окно оверлея успешно удалено.")
             } catch (e: Exception) {
-                Log.e(TAG, "removeOverlay: Ошибка при удалении View из WindowManager", e)
+                sendLogToActivity("ОТРИСОВКА СБОЙ УДАЛЕНИЯ: ${e.localizedMessage}")
             }
             overlayView = null
         }
@@ -247,43 +240,36 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     private fun startForegroundNotification() {
-        Log.d(TAG, "startForegroundNotification: Инициализация уведомления шторки")
         val channelId = "deer_peek_service"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId, "Deer Peek Background Service",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
 
-        val notification: Notification = NotificationCompat.Builder(this, channelId)
+        val notification: Notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle("Олень на страже")
-            .setContentText("Тестовый режим подробного логирования...")
+            .setContentText("Интегрированный текстовый логгер активен...")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            } else {
-                startForeground(1, notification)
-            }
-            Log.d(TAG, "startForegroundNotification: Сервис успешно переведен в режим Foreground")
-        } catch (e: Exception) {
-            Log.e(TAG, "startForegroundNotification: Не удалось перевести сервис в режим Foreground", e)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(1, notification)
         }
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy: Сервис уничтожается")
         isListening = false
         audioRecord?.apply {
-            try { stop(); release(); Log.d(TAG, "onDestroy: Микрофон освобожден") } catch (e: Exception) {}
+            try { stop(); release() } catch (e: Exception) {}
         }
-        try { shakeDetector?.stop(); Log.d(TAG, "onDestroy: Акселерометр остановлен") } catch (e: Exception) {}
+        try { shakeDetector?.stop() } catch (e: Exception) {}
         removeOverlay()
         super.onDestroy()
     }
