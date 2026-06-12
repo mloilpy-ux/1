@@ -34,18 +34,22 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Создаем интерфейс программно, чтобы не зависеть от XML
+        // Создаем корневой контейнер без вызова метода padding
         val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            padding = 32
+        }
+
+        // Задаем отступы через LayoutParams
+        val layoutParamsWithMargins = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(32, 32, 32, 32)
         }
 
         val startButton = Button(this).apply {
             text = "ЗАПУСТИТЬ ОЛЕНЯ И ДАТЧИКИ"
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            layoutParams = layoutParamsWithMargins
         }
         rootLayout.addView(startButton)
 
@@ -54,13 +58,14 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1f
-            )
+            ).apply {
+                setMargins(32, 0, 32, 32)
+            }
         }
 
         logTextView = TextView(this).apply {
             text = "--- СИСТЕМНЫЙ ЛОГ ДЕБАГА ---\nПриложение запущено. Ожидание старта сервиса...\n"
             textSize = 14f
-            contentDescription = "Логи приложения"
         }
         
         scrollView.addView(logTextView)
@@ -74,7 +79,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Регистрируем приемник логов от сервиса
         val filter = IntentFilter("com.lunya.deerpeek.LOG_BROADCAST")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(logReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
