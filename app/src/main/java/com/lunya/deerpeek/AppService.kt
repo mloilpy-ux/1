@@ -58,7 +58,6 @@ class AppService : Service(), ShakeDetector.Listener {
     private val cooldownMillis = 3500L
     private var systemReceiver: BroadcastReceiver? = null
 
-    // Базовый системный промпт ИИ, описывающий твоего персонажа
     private val characterSystemPrompt = """
         Ты — Луня, персонаж-антропоморфный олень. У тебя синий мех, неоново-зеленые волосы, фиолетовые глаза, фиолетовый нос и фиолетовые когти. 
         Твой стиль речи: строго аналитический, объективный, клинический. Полное отсутствие chatbot-вежливости, филлеров и навязчивого дружелюбия. Пиши емко, лаконично, прямо по существу контекста ситуации. Если требуется сгенерировать арт-промпт, пиши структуру для Image Generator (Flux/Stable Diffusion) с акцентом на cinematic noir и tactile realism.
@@ -269,7 +268,6 @@ class AppService : Service(), ShakeDetector.Listener {
 
                 val viewSizePx = (size * density).toInt()
 
-                // Создаем иерархию UI: вертикальный контейнер для текста и картинки персонажа
                 containerView = LinearLayout(applicationContext).apply {
                     orientation = LinearLayout.VERTICAL
                     setBackgroundColor(Color.TRANSPARENT)
@@ -277,11 +275,11 @@ class AppService : Service(), ShakeDetector.Listener {
                 }
 
                 speechBubbleTv = TextView(applicationContext).apply {
-                    setBackgroundColor(0xDD111111.toInt()) // Стильный темный фон облачка
+                    setBackgroundColor(0xDD111111.toInt())
                     setTextColor(Color.WHITE)
                     setPadding(20, 12, 20, 12)
                     textSize = 13f
-                    visibility = View.GONE // Скрыто до получения ответа от Gemini
+                    visibility = View.GONE
                     val bubbleParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -309,7 +307,6 @@ class AppService : Service(), ShakeDetector.Listener {
                     y = if (hasSavedPos) savedY else 0
                 }
 
-                // Интерактивное таскание и вызов ИИ
                 containerView?.setOnTouchListener(object : View.OnTouchListener {
                     private var initialX = 0
                     private var initialY = 0
@@ -366,7 +363,6 @@ class AppService : Service(), ShakeDetector.Listener {
 
                 windowManager.addView(containerView, params)
 
-                // Кинематический выезд снизу вверх
                 val targetYDelta = viewSizePx * 1.0f
                 containerView?.translationY = targetYDelta
                 
@@ -374,21 +370,21 @@ class AppService : Service(), ShakeDetector.Listener {
                     duration = 550
                     interpolator = DecelerateInterpolator()
                     addUpdateListener { animator ->
-                        containerView?.translationY = animator.animatedValue as Float
+                        val animValue = animator.animatedValue as Float
+                        containerView?.translationY = animValue
                     }
                 }
                 appearanceAnimator.start()
 
-                // Асинхронно отправляем контекст события в Gemini
                 executeGeminiRequest(contextReason)
 
-                // Таймер ухода обратно под экран (увеличен до 5 секунд, чтобы пользователь успел прочесть текст ИИ)
                 mainHandler.postDelayed({
                     val disappearanceAnimator = ValueAnimator.ofFloat(0f, targetYDelta).apply {
                         duration = 450
                         interpolator = DecelerateInterpolator()
                         addUpdateListener { animator ->
-                            containerView?.translationY = animator.animatedValue as Float
+                            val animValue = animator.animatedValue as Float
+                            containerView?.translationY = animValue
                         }
                     }
                     disappearanceAnimator.start()
