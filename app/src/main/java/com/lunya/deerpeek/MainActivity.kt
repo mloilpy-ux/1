@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -26,7 +27,6 @@ class MainActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("deer_prefs", Context.MODE_PRIVATE)
 
-        // Контейнер-скролл для кучи настроек
         val scrollView = ScrollView(this)
         val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -35,13 +35,11 @@ class MainActivity : AppCompatActivity() {
         scrollView.addView(rootLayout)
         setContentView(scrollView)
 
-        // --- КНОПКА ЗАПУСКА ---
         val startButton = Button(this).apply {
             text = "ЗАПУСТИТЬ ОЛЕНЯ И СЛУЖБЫ"
         }
         rootLayout.addView(startButton)
 
-        // Вспомогательная функция для создания заголовков блоков настроек
         fun addHeader(text: String) {
             val tv = TextView(this).apply {
                 setText(text)
@@ -52,7 +50,15 @@ class MainActivity : AppCompatActivity() {
             rootLayout.addView(tv)
         }
 
-        // --- НАСТРОЙКА: СТАРТОВАЯ ПОЗИЦИЯ ---
+        // --- GEMINI API KEY ---
+        addHeader("Gemini API Ключ:")
+        val apiKeyInput = EditText(this).apply {
+            hint = "Вставьте ваш AI КЛЮЧ сюда"
+            setText(prefs.getString("gemini_api_key", ""))
+        }
+        rootLayout.addView(apiKeyInput)
+
+        // --- СТАРТОВАЯ ПОЗИЦИЯ ---
         addHeader("Стартовое положение на экране:")
         val positionSpinner = Spinner(this)
         val positions = arrayOf("Левый нижний угол", "Правый нижний угол", "Левый верхний угол", "Правый верхний угол")
@@ -63,7 +69,7 @@ class MainActivity : AppCompatActivity() {
         positionSpinner.setSelection(prefs.getInt("start_gravity_index", 0))
         rootLayout.addView(positionSpinner)
 
-        // --- НАСТРОЙКА: РАЗМЕР ---
+        // --- РАЗМЕР ---
         val sizeValueTv = TextView(this)
         val currentSize = prefs.getInt("deer_size", 250)
         sizeValueTv.text = "Размер оверлея: ${currentSize}dp"
@@ -85,7 +91,7 @@ class MainActivity : AppCompatActivity() {
         }
         rootLayout.addView(sizeSeekBar)
 
-        // --- НАСТРОЙКА: ПРОЗРАЧНОСТЬ ---
+        // --- ПРОЗРАЧНОСТЬ ---
         val alphaValueTv = TextView(this)
         val currentAlpha = prefs.getInt("deer_alpha", 100)
         alphaValueTv.text = "Прозрачность: $currentAlpha%"
@@ -96,7 +102,7 @@ class MainActivity : AppCompatActivity() {
             progress = currentAlpha
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val p = if (progress < 10) 10 intervals else progress
+                    val p = if (progress < 10) 10 else progress
                     alphaValueTv.text = "Прозрачность: $p%"
                     prefs.edit().putInt("deer_alpha", p).apply()
                     notifyServiceSettingsChanged()
@@ -107,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         }
         rootLayout.addView(alphaSeekBar)
 
-        // --- НАСТРОЙКА: ЧУВСТВИТЕЛЬНОСТЬ МИКРОФОНА ---
+        // --- ЧУВСТВИТЕЛЬНОСТЬ МИКРОФОНА ---
         val micValueTv = TextView(this)
         val currentMicThreshold = prefs.getInt("mic_threshold", 3000)
         micValueTv.text = "Порог шума микрофона: $currentMicThreshold"
@@ -132,7 +138,6 @@ class MainActivity : AppCompatActivity() {
         // --- ОБРАБОТКА СТАРТА ---
         startButton.setOnClickListener {
             if (checkPermissions()) {
-                // Сохраняем гравитацию перед запуском
                 val gravityFlag = when (positionSpinner.selectedItemPosition) {
                     1 -> Gravity.BOTTOM or Gravity.END
                     2 -> Gravity.TOP or Gravity.START
@@ -140,6 +145,7 @@ class MainActivity : AppCompatActivity() {
                     else -> Gravity.BOTTOM or Gravity.START
                 }
                 prefs.edit()
+                    .putString("gemini_api_key", apiKeyInput.text.toString().trim())
                     .putInt("start_gravity_index", positionSpinner.selectedItemPosition)
                     .putInt("start_gravity_flag", gravityFlag)
                     .apply()
@@ -152,13 +158,12 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     startService(intent)
                 }
-                Toast.makeText(this, "Служба оленя перезапущена!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Служба оленя Луни активна!", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun notifyServiceSettingsChanged() {
-        // Отправляем интент сервису, чтобы он обновил параметры на лету, если он уже запущен
         val intent = Intent(this, AppService::class.java).apply {
             action = "UPDATE_SETTINGS"
         }
