@@ -33,7 +33,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.google.ai.client.generativeai.GenerativeModel
-import com.squareup.seismic.ShakeDetector
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
