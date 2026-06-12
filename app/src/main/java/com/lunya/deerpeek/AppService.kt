@@ -28,7 +28,10 @@ import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import com.google.ai.client.generativeai.GenerativeModel
 import com.squareup.seismic.ShakeDetector
 import java.io.File
 import java.io.FileOutputStream
@@ -40,10 +43,12 @@ import kotlin.math.abs
 class AppService : Service(), ShakeDetector.Listener {
 
     private lateinit var windowManager: WindowManager
+    private var containerView: LinearLayout? = null
     private var deerImageView: ImageView? = null
+    private var speechBubbleTv: TextView? = null
+    
     private var isShowing = false
     private var shakeDetector: ShakeDetector? = null
-    private var audioRecord: NullableAudioRecord? = null
     private var audioRecordInstance: AudioRecord? = null
     @Volatile private var isListening = false
     private var lastAudioPeakTime: Long = 0
@@ -52,6 +57,12 @@ class AppService : Service(), ShakeDetector.Listener {
     private var lastTriggerTime: Long = 0
     private val cooldownMillis = 3500L
     private var systemReceiver: BroadcastReceiver? = null
+
+    // Базовый системный промпт ИИ, описывающий твоего персонажа
+    private val characterSystemPrompt = """
+        Ты — Луня, персонаж-антропоморфный олень. У тебя синий мех, неоново-зеленые волосы, фиолетовые глаза, фиолетовый нос и фиолетовые когти. 
+        Твой стиль речи: строго аналитический, объективный, клинический. Полное отсутствие chatbot-вежливости, филлеров и навязчивого дружелюбия. Пиши емко, лаконично, прямо по существу контекста ситуации. Если требуется сгенерировать арт-промпт, пиши структуру для Image Generator (Flux/Stable Diffusion) с акцентом на cinematic noir и tactile realism.
+    """.trimIndent()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -68,7 +79,7 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        logToFile("=== ЗАПУСК СЛУЖБЫ С АНИМАЦИЕЙ ВЫЕЗДА ===")
+        logToFile("=== СЛУЖБА ЛУНИ С ИИ И КИНЕМАТИКОЙ ЗАПУЩЕНА ===")
         registerSystemTriggers()
     }
 
@@ -76,7 +87,7 @@ class AppService : Service(), ShakeDetector.Listener {
         startForegroundNotification()
         
         when (intent?.action) {
-            "FORCE_PEEK" -> triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true)
+            "FORCE_PEEK" -> triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Ручной запуск из интерфейса пользователя.", force = true)
             "UPDATE_SETTINGS" -> applyLiveSettings()
         }
 
@@ -100,8 +111,8 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     override fun hearShake() {
-        logToFile("Триггер: Тряска корпуса. Полный выезд.")
-        triggerDeerPeek(peekType = PeekType.FULL_WAVING)
+        logToFile("Триггер: Тряска корпуса.")
+        triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Зафиксировано физическое ускорение (тряска устройства). Сгенерируй краткую оценку стабильности.")
     }
 
     private fun applyLiveSettings() {
@@ -111,11 +122,11 @@ class AppService : Service(), ShakeDetector.Listener {
         val alphaPercent = prefs.getInt("deer_alpha", 100)
 
         mainHandler.post {
-            deerImageView?.let { view ->
+            containerView?.let { view ->
                 try {
                     val params = view.layoutParams as WindowManager.LayoutParams
                     params.width = (size * density).toInt()
-                    params.height = (size * density).toInt()
+                    params.height = WindowManager.LayoutParams.WRAP_CONTENT
                     windowManager.updateViewLayout(view, params)
                     view.alpha = alphaPercent / 100f
                 } catch (e: Exception) {}
@@ -127,17 +138,18 @@ class AppService : Service(), ShakeDetector.Listener {
         systemReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_POWER_CONNECTED -> triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
+                    Intent.ACTION_POWER_CONNECTED -> 
+                        triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Подключен внешний источник питания. Оцени подачу энергии.")
                     Intent.ACTION_HEADSET_PLUG -> {
                         if (intent.getIntExtra("state", -1) == 1) {
-                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
+                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Подключен аудиоинтерфейс (наушники).")
                         }
                     }
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
                         if (level * 100 / scale.toFloat() <= 15f) {
-                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK)
+                            triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Критический уровень энергозапаса батареи ниже 15 процентов.")
                         }
                     }
                 }
@@ -169,10 +181,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     bufferSize
                 )
 
-                if (audioRecordInstance?.state != AudioRecord.STATE_INITIALIZED) {
-                    logToFile("Микрофон монополизирован сторонним софтом.")
-                    return@Thread
-                }
+                if (audioRecordInstance?.state != AudioRecord.STATE_INITIALIZED) return@Thread
 
                 isListening = true
                 audioRecordInstance?.startRecording()
@@ -195,16 +204,20 @@ class AppService : Service(), ShakeDetector.Listener {
                             val diff = now - lastAudioPeakTime
                             
                             if (lastAudioPeakTime == 0L) {
-                                // Первый щелчок / одиночный звук: реагируем мгновенно легким выглядыванием
                                 lastAudioPeakTime = now
-                                mainHandler.post { triggerDeerPeek(peekType = PeekType.SHORT_LOOK) }
+                                mainHandler.post { 
+                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Зафиксирован одиночный акустический импульс окружения.") 
+                                }
                             } else if (diff in 50..1000) {
-                                // Успешный двойной щелчок: олень понимает команду и машет лапой
                                 lastAudioPeakTime = 0
-                                mainHandler.post { triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true) }
+                                mainHandler.post { 
+                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Зафиксирован авторизованный двойной щелчок пользователя. Сгенерируй также промпт для генерации картинки с оленем Луней в стиле cinematic noir.", force = true) 
+                                }
                             } else if (diff > 1000) {
                                 lastAudioPeakTime = now
-                                mainHandler.post { triggerDeerPeek(peekType = PeekType.SHORT_LOOK) }
+                                mainHandler.post { 
+                                    triggerDeerPeek(peekType = PeekType.SHORT_LOOK, contextReason = "Изолированный сторонний звук приложения.") 
+                                }
                             }
                         }
                     }
@@ -217,24 +230,24 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     enum class PeekType {
-        SHORT_LOOK,   // Слегка приподнимается (реакция на шум/одиночный клик)
-        FULL_WAVING   // Выезжает полностью и машет (двойной щелчок/тряска)
+        SHORT_LOOK,
+        FULL_WAVING
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun triggerDeerPeek(peekType: PeekType, force: Boolean = false) {
+    private fun triggerDeerPeek(peekType: PeekType, contextReason: String, force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && (now - lastTriggerTime < cooldownMillis) && peekType == PeekType.SHORT_LOOK) {
             return 
         }
 
         mainHandler.post {
-            // Если олень уже на экране и регистрируется повторный двойной щелчок — переключаем текстуру на анимацию махания
             if (isShowing) {
                 if (peekType == PeekType.FULL_WAVING) {
                     try {
                         deerImageView?.setImageResource(R.drawable.deer_waving)
                         (deerImageView?.drawable as? AnimationDrawable)?.start()
+                        executeGeminiRequest(contextReason)
                     } catch (e: Exception) {}
                 }
                 return@post
@@ -256,14 +269,37 @@ class AppService : Service(), ShakeDetector.Listener {
 
                 val viewSizePx = (size * density).toInt()
 
-                deerImageView = ImageView(applicationContext).apply {
+                // Создаем иерархию UI: вертикальный контейнер для текста и картинки персонажа
+                containerView = LinearLayout(applicationContext).apply {
+                    orientation = LinearLayout.VERTICAL
                     setBackgroundColor(Color.TRANSPARENT)
-                    scaleType = ImageView.ScaleType.FIT_CENTER
                     alpha = alphaPercent / 100f
                 }
 
+                speechBubbleTv = TextView(applicationContext).apply {
+                    setBackgroundColor(0xDD111111.toInt()) // Стильный темный фон облачка
+                    setTextColor(Color.WHITE)
+                    setPadding(20, 12, 20, 12)
+                    textSize = 13f
+                    visibility = View.GONE // Скрыто до получения ответа от Gemini
+                    val bubbleParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(0, 0, 0, 8) }
+                    layoutParams = bubbleParams
+                }
+
+                deerImageView = ImageView(applicationContext).apply {
+                    setBackgroundColor(Color.TRANSPARENT)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    layoutParams = LinearLayout.LayoutParams(viewSizePx, viewSizePx)
+                }
+
+                containerView?.addView(speechBubbleTv)
+                containerView?.addView(deerImageView)
+
                 val params = WindowManager.LayoutParams(
-                    viewSizePx, viewSizePx,
+                    viewSizePx, WindowManager.LayoutParams.WRAP_CONTENT,
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT
@@ -273,8 +309,8 @@ class AppService : Service(), ShakeDetector.Listener {
                     y = if (hasSavedPos) savedY else 0
                 }
 
-                // Интерактив таскания
-                deerImageView?.setOnTouchListener(object : View.OnTouchListener {
+                // Интерактивное таскание и вызов ИИ
+                containerView?.setOnTouchListener(object : View.OnTouchListener {
                     private var initialX = 0
                     private var initialY = 0
                     private var initialTouchX = 0f
@@ -300,7 +336,7 @@ class AppService : Service(), ShakeDetector.Listener {
                                     } else {
                                         params.y = initialY + (event.rawY - initialTouchY).toInt()
                                     }
-                                    try { windowManager.updateViewLayout(deerImageView, params) } catch (e: Exception) {}
+                                    try { windowManager.updateViewLayout(containerView, params) } catch (e: Exception) {}
                                 }
                                 return true
                             }
@@ -308,7 +344,7 @@ class AppService : Service(), ShakeDetector.Listener {
                                 if (isMove) {
                                     prefs.edit().putInt("saved_x", params.x).putInt("saved_y", params.y).putBoolean("has_saved_pos", true).apply()
                                 } else {
-                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, force = true)
+                                    triggerDeerPeek(peekType = PeekType.FULL_WAVING, contextReason = "Пользователь совершил прямое интерактивное касание оверлея персонажа.", force = true)
                                 }
                                 return true
                             }
@@ -317,10 +353,9 @@ class AppService : Service(), ShakeDetector.Listener {
                     }
                 })
 
-                // Выбор стартового кадра/анимации в зависимости от типа шума
                 try {
                     if (peekType == PeekType.SHORT_LOOK) {
-                        deerImageView?.setImageResource(R.drawable.deer_frame_1) // Одиночный шум — просто настороженный первый кадр
+                        deerImageView?.setImageResource(R.drawable.deer_frame_1)
                     } else {
                         deerImageView?.setImageResource(R.drawable.deer_waving)
                         (deerImageView?.drawable as? AnimationDrawable)?.start()
@@ -329,32 +364,31 @@ class AppService : Service(), ShakeDetector.Listener {
                     deerImageView?.setImageResource(android.R.drawable.ic_menu_compass)
                 }
 
-                windowManager.addView(deerImageView, params)
+                windowManager.addView(containerView, params)
 
-                // Рассчитываем высоту подъема анимации
-                val targetYDelta = if (peekType == PeekType.SHORT_LOOK) viewSizePx * 0.35f else viewSizePx * 1.0f
-                
-                // Инициализируем аниматор перевода координат (выезд из самого низа экрана)
-                deerImageView?.translationY = targetYDelta
+                // Кинематический выезд снизу вверх
+                val targetYDelta = viewSizePx * 1.0f
+                containerView?.translationY = targetYDelta
                 
                 val appearanceAnimator = ValueAnimator.ofFloat(targetYDelta, 0f).apply {
                     duration = 550
                     interpolator = DecelerateInterpolator()
                     addUpdateListener { animator ->
-                        val value = animator.animatedValue as Float
-                        deerImageView?.translationY = value
+                        containerView?.translationY = animator.animatedValue as Float
                     }
                 }
                 appearanceAnimator.start()
 
-                // Таймер ухода обратно под экран
+                // Асинхронно отправляем контекст события в Gemini
+                executeGeminiRequest(contextReason)
+
+                // Таймер ухода обратно под экран (увеличен до 5 секунд, чтобы пользователь успел прочесть текст ИИ)
                 mainHandler.postDelayed({
                     val disappearanceAnimator = ValueAnimator.ofFloat(0f, targetYDelta).apply {
                         duration = 450
                         interpolator = DecelerateInterpolator()
                         addUpdateListener { animator ->
-                            val value = animator.animatedValue as Float
-                            deerImageView?.translationY = value
+                            containerView?.translationY = animator.animatedValue as Float
                         }
                     }
                     disappearanceAnimator.start()
@@ -362,7 +396,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     mainHandler.postDelayed({
                         removeOverlay()
                     }, 460)
-                }, 2500)
+                }, 5000)
 
             } catch (e: Exception) {
                 isShowing = false
@@ -370,10 +404,38 @@ class AppService : Service(), ShakeDetector.Listener {
         }
     }
 
+    private fun executeGeminiRequest(reason: String) {
+        val prefs = getSharedPreferences("deer_prefs", Context.MODE_PRIVATE)
+        val apiKey = prefs.getString("gemini_api_key", "") ?: ""
+        if (apiKey.isEmpty()) return
+
+        Thread {
+            try {
+                val generativeModel = GenerativeModel(
+                    modelName = "gemini-2.5-flash",
+                    apiKey = apiKey
+                )
+                val fullPrompt = "$characterSystemPrompt\n\nКонтекстное событие: $reason"
+                val response = generativeModel.generateContent(fullPrompt)
+                
+                mainHandler.post {
+                    response.text?.let { text ->
+                        speechBubbleTv?.text = text
+                        speechBubbleTv?.visibility = View.VISIBLE
+                    }
+                }
+            } catch (e: Exception) {
+                logToFile("Ошибка генерации Gemini: ${e.localizedMessage}")
+            }
+        }.start()
+    }
+
     private fun removeOverlay() {
-        if (deerImageView != null) {
-            try { windowManager.removeView(deerImageView) } catch (e: Exception) {}
+        if (containerView != null) {
+            try { windowManager.removeView(containerView) } catch (e: Exception) {}
+            containerView = null
             deerImageView = null
+            speechBubbleTv = null
         }
         isShowing = false
     }
@@ -385,8 +447,8 @@ class AppService : Service(), ShakeDetector.Listener {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("Олень")
-            .setContentText("Кинематическая отрисовка включена")
+            .setContentTitle("Луня")
+            .setContentText("ИИ Ассистент активен")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
         startForeground(1, notification)
