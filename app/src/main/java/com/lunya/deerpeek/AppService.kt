@@ -369,10 +369,12 @@ class AppService : Service(), ShakeDetector.Listener {
                 val appearanceAnimator = ValueAnimator.ofFloat(targetYDelta, 0f).apply {
                     duration = 550
                     interpolator = DecelerateInterpolator()
-                    addUpdateListener { animator ->
-                        val animValue = animator.animatedValue as Float
-                        containerView?.translationY = animValue
-                    }
+                    addUpdateListener(object : ValueAnimator.AnimatorUpdateListener {
+                        override fun onAnimationUpdate(animator: ValueAnimator) {
+                            val animValue = animator.animatedValue as Float
+                            containerView?.translationY = animValue
+                        }
+                    })
                 }
                 appearanceAnimator.start()
 
@@ -382,10 +384,12 @@ class AppService : Service(), ShakeDetector.Listener {
                     val disappearanceAnimator = ValueAnimator.ofFloat(0f, targetYDelta).apply {
                         duration = 450
                         interpolator = DecelerateInterpolator()
-                        addUpdateListener { animator ->
-                            val animValue = animator.animatedValue as Float
-                            containerView?.translationY = animValue
-                        }
+                        addUpdateListener(object : ValueAnimator.AnimatorUpdateListener {
+                            override fun onAnimationUpdate(animator: ValueAnimator) {
+                                val animValue = animator.animatedValue as Float
+                                containerView?.translationY = animValue
+                            }
+                        })
                     }
                     disappearanceAnimator.start()
 
