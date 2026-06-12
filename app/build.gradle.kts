@@ -13,12 +13,17 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {
@@ -36,6 +41,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.google.ai.client.generativeai:generativeai:0.7.0")
 
-    // Библиотека от Square для детектора тряски
-    implementation("com.squareup:seismic:1.0.3")
+    // Исправленный идентификатор группы (через точку, а не двоеточие)
+    implementation("com.squareup.seismic:seismic:1.0.3")
 }
