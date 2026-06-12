@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.AnimationDrawable
 import android.hardware.SensorManager
@@ -18,7 +19,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
@@ -34,7 +34,7 @@ import kotlin.math.abs
 class AppService : Service(), ShakeDetector.Listener {
 
     private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
+    private var deerImageView: ImageView? = null
     private var isShowing = false
     private var shakeDetector: ShakeDetector? = null
     private var audioRecord: AudioRecord? = null
@@ -57,7 +57,7 @@ class AppService : Service(), ShakeDetector.Listener {
     override fun onCreate() {
         super.onCreate()
         windowManager = applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        logToFile("=== СЕРВИС СОЗДАН ===")
+        logToFile("=== СЕРВИС СОЗДАН ИЗАПУЩЕН ===")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -68,7 +68,6 @@ class AppService : Service(), ShakeDetector.Listener {
             triggerDeerPeek()
         }
 
-        // Железобетонный запуск акселерометра в основном потоке сервиса
         if (shakeDetector == null) {
             try {
                 val sensorManager = applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -76,13 +75,12 @@ class AppService : Service(), ShakeDetector.Listener {
                     setSensitivity(ShakeDetector.SENSITIVITY_HARD)
                     start(sensorManager)
                 }
-                logToFile("Акселерометр успешно запущен.")
+                logToFile("Акселерометр запущен успешно.")
             } catch (e: Exception) {
                 logToFile("Ошибка акселерометра: ${e.localizedMessage}")
             }
         }
 
-        // Запуск микрофона полностью изолирован. Даже если он упадет, акселерометр выживет
         if (!isListening) {
             startSnapDetector()
         }
@@ -91,7 +89,7 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     override fun hearShake() {
-        logToFile("Датчик: Тряска! (Сработал независимо от состояния микрофона)")
+        logToFile("Датчик: Тряска корпуса.")
         triggerDeerPeek()
     }
 
@@ -103,13 +101,9 @@ class AppService : Service(), ShakeDetector.Listener {
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             
-            if (bufferSize <= 0) {
-                logToFile("Ошибка аудио: Неверный размер буфера.")
-                return@Thread
-            }
+            if (bufferSize <= 0) return@Thread
 
             try {
-                // ИСПОЛЬЗУЕМ VOICE_RECOGNITION вместо MIC. Он обходит монополию Discord/Записи экрана во многих прошивках
                 audioRecord = AudioRecord(
                     MediaRecorder.AudioSource.VOICE_RECOGNITION, 
                     sampleRate, 
@@ -119,13 +113,13 @@ class AppService : Service(), ShakeDetector.Listener {
                 )
 
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    logToFile("Микрофон занят другим приложением (Discord/Рекордер). Ждем освобождения...")
+                    logToFile("Микрофон монополизирован другой программой. Ожидание.")
                     return@Thread
                 }
 
                 isListening = true
                 audioRecord?.startRecording()
-                logToFile("Поток микрофона запущен в режиме совместного аудио.")
+                logToFile("Аудиопоток MIC успешно инициализирован.")
 
                 val buffer = ShortArray(bufferSize)
                 while (isListening) {
@@ -136,8 +130,6 @@ class AppService : Service(), ShakeDetector.Listener {
                             val v = abs(buffer[i].toInt())
                             if (v > maxAmp) maxAmp = v
                         }
-                        // Если система глушит поток из-за Discord, read вернет 0 или нули.
-                        // Но если звук пробивается — обрабатываем двойной щелчок
                         if (maxAmp > 3000) {
                             val now = System.currentTimeMillis()
                             val diff = now - lastAudioPeakTime
@@ -152,7 +144,7 @@ class AppService : Service(), ShakeDetector.Listener {
                     Thread.sleep(10)
                 }
             } catch (e: Exception) {
-                logToFile("Изолированный сбой микрофона: ${e.localizedMessage}. Акселерометр продолжает работу.")
+                logToFile("Изолированное исключение аудио: ${e.localizedMessage}")
                 isListening = false
             }
         }.start()
@@ -164,52 +156,60 @@ class AppService : Service(), ShakeDetector.Listener {
             isShowing = true
 
             try {
-                val inflater = applicationContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-                overlayView = inflater.inflate(R.layout.overlay_deer, null)
-                
-                // Делаем контейнер прозрачным на уровне разметки кода
-                overlayView?.setBackgroundColor(0x00000000) 
-
                 val density = resources.displayMetrics.density
+                
+                // Создаем ImageView программно, полностью игнорируя XML файлы
+                deerImageView = ImageView(applicationContext).apply {
+                    setBackgroundColor(Color.TRANSPARENT)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                }
+
                 val params = WindowManager.LayoutParams(
                     (250 * density).toInt(), 
                     (300 * density).toInt(),
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                    PixelFormat.TRANSLUCENT // Гарантирует альфа-канал и прозрачность
+                    PixelFormat.TRANSLUCENT
                 ).apply {
-                    // ИСПРАВЛЕНО: Переносим в левый нижний угол (BOTTOM or START/LEFT)
-                    gravity = Gravity.BOTTOM or Gravity.START
+                    gravity = Gravity.BOTTOM or Gravity.START // Строго левый нижний угол
                     x = 0
                     y = 0
                 }
 
-                val deerImageView = overlayView?.findViewById<ImageView>(R.id.deerImageView)
-                // Убираем возможный фон у самой картинки
-                deerImageView?.setBackgroundColor(0x00000000)
+                windowManager.addView(deerImageView, params)
+                logToFile("Оверлей добавлен: Левый нижний угол, фон прозрачный.")
 
-                windowManager.addView(overlayView, params)
-                logToFile("Оверлей выведен в ЛЕВЫЙ НИЖНИЙ угол.")
-
-                // Загружаем напрямую чистый кадр вместо XML-анимации для проверки
-                deerImageView?.setImageResource(R.drawable.deer_frame_1)               
+                // Проверяем наличие анимации или ставим первый кадр
+                try {
+                    deerImageView?.setImageResource(R.drawable.deer_waving)
+                    val wavingAnimation = deerImageView?.drawable as? AnimationDrawable
+                    if (wavingAnimation != null) {
+                        wavingAnimation.start()
+                    } else {
+                        // Фолбэк на статический первый кадр, если анимация не собралась
+                        deerImageView?.setImageResource(R.drawable.deer_frame_1)
+                    }
+                } catch (resException: Exception) {
+                    logToFile("Ресурсы изображений недоступны: ${resException.localizedMessage}")
+                }
 
                 mainHandler.postDelayed({
                     removeOverlay()
                 }, 3000)
             } catch (e: Exception) {
-                logToFile("Ошибка WindowManager: ${e.localizedMessage}")
+                logToFile("Критическая ошибка WindowManager: ${e.localizedMessage}")
                 isShowing = false
             }
         }
     }
 
     private fun removeOverlay() {
-        if (overlayView != null) {
+        if (deerImageView != null) {
             try {
-                windowManager.removeView(overlayView)
+                windowManager.removeView(deerImageView)
+                logToFile("Оверлей успешно удален.")
             } catch (e: Exception) {}
-            overlayView = null
+            deerImageView = null
         }
         isShowing = false
     }
@@ -222,7 +222,7 @@ class AppService : Service(), ShakeDetector.Listener {
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle("Олень")
-            .setContentText("Защита от конфликтов микрофона")
+            .setContentText("Активен (Левый угол, без фона)")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
         
