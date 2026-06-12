@@ -33,12 +33,9 @@ class AppService : Service(), ShakeDetector.Listener {
     private var overlayView: View? = null
     private var isShowing = false
 
-    // Для детектора тряски (Seismic)
     private lateinit var shakeDetector: ShakeDetector
-
-    // Для детектора щелчков
     private var audioRecord: AudioRecord? = null
-    private var isListening = false
+    @Volatile private var isListening = false
     private var lastAudioPeakTime: Long = 0
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -49,24 +46,27 @@ class AppService : Service(), ShakeDetector.Listener {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         
-        // 1. Запуск Foreground уведомления
         startForegroundNotification()
 
-        // 2. Инициализация детектора тряски
-        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        shakeDetector = ShakeDetector(this)
-        shakeDetector.start(sensorManager)
+        // Инициализация детектора тряски
+        try {
+            val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+            shakeDetector = ShakeDetector(this)
+            // Установим среднюю чувствительность (SENSITIVITY_LIGHT или SENSITIVITY_DEFAULT)
+            shakeDetector.setSensitivity(ShakeDetector.SENSITIVITY_LIGHT)
+            shakeDetector.start(sensorManager)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-        // 3. Запуск детектора щелчков пальцев
+        // Запуск микрофона
         startSnapDetector()
     }
 
-    // Триггер 1: Сработал детектор тряски от Square Seismic
     override fun hearShake() {
-        triggerDeerPeek()
+        mainHandler.post { triggerDeerPeek() }
     }
 
-    // Триггер 2: Логика обработки звука (Двойной щелчок)
     @SuppressLint("MissingPermission")
     private fun startSnapDetector() {
         val sampleRate = 44100
@@ -74,18 +74,23 @@ class AppService : Service(), ShakeDetector.Listener {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
+        if (bufferSize <= 0) return
+
         try {
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 sampleRate, channelConfig, audioFormat, bufferSize
             )
 
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) return
+
             isListening = true
             audioRecord?.startRecording()
 
             Thread {
                 val buffer = ShortArray(bufferSize)
-                val peakThreshold = 18000 // Чувствительность к резкому звуку (щелчку)
+                // Снизили порог до 12000, чтобы реагировал даже на негромкие щелчки
+                val peakThreshold = 12000 
 
                 while (isListening) {
                     val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
@@ -96,20 +101,21 @@ class AppService : Service(), ShakeDetector.Listener {
                             if (value > maxAmplitude) maxAmplitude = value
                         }
 
-                        // Если зафиксирован резкий всплеск звука
                         if (maxAmplitude > peakThreshold) {
                             val currentTime = System.currentTimeMillis()
                             val timeDiff = currentTime - lastAudioPeakTime
 
-                            // Проверяем интервал между первым и вторым щелчком (от 200 до 650 миллисекунд)
-                            if (timeDiff in 200..650) {
+                            // Окно между щелчками: от 150 до 800 мс
+                            if (timeDiff in 150..800) {
                                 mainHandler.post { triggerDeerPeek() }
-                                lastAudioPeakTime = 0 // Сброс
+                                lastAudioPeakTime = 0
                             } else {
                                 lastAudioPeakTime = currentTime
                             }
                         }
                     }
+                    // Легкая разгрузка процессора
+                    Thread.sleep(10)
                 }
             }.start()
         } catch (e: Exception) {
@@ -117,7 +123,6 @@ class AppService : Service(), ShakeDetector.Listener {
         }
     }
 
-    // Рендеринг и анимация оверлея поверх экрана
     private fun triggerDeerPeek() {
         if (isShowing) return
         isShowing = true
@@ -125,6 +130,7 @@ class AppService : Service(), ShakeDetector.Listener {
         val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
         overlayView = inflater.inflate(R.layout.overlay_deer, null)
 
+        // КРИТИЧЕСКИЕ ФЛАГИ: Добавлен FLAG_NOT_TOUCHABLE, чтобы клики шли сквозь оверлей
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -132,41 +138,46 @@ class AppService : Service(), ShakeDetector.Listener {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
             else 
                 WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.END
             x = 0
-            y = 100 // Высота над нижним краем экрана
+            y = 150 
         }
 
         val deerImageView = overlayView?.findViewById<ImageView>(R.id.deerImageView)
 
-        // Изначально смещаем оленя вправо за границы видимости экрана
-        overlayView?.translationX = 500f
-        windowManager.addView(overlayView, params)
+        // Изначально прячем контейнер полностью за край экрана (на 600 пикселей вправо)
+        overlayView?.translationX = 600f
+        
+        try {
+            windowManager.addView(overlayView, params)
+        } catch (e: Exception) {
+            isShowing = false
+            return
+        }
 
-        // Анимация 1: Плавный выезд оленя слева из-за экрана
+        // Анимация выезда
         overlayView?.animate()
             ?.translationX(0f)
-            ?.setDuration(400)
-            ?.setInterpolator(OvershootInterpolator(1.2f))
+            ?.setDuration(500)
+            ?.setInterpolator(OvershootInterpolator(1.0f))
             ?.withEndAction {
-                // Как только олень выехал, меняем статичный кадр на анимацию махания лапкой
                 deerImageView?.setImageResource(R.drawable.deer_waving)
                 val wavingAnimation = deerImageView?.drawable as? AnimationDrawable
                 wavingAnimation?.start()
 
-                // Олень машет лапкой ровно 2.5 секунды, затем прячется обратно
                 mainHandler.postDelayed({
                     wavingAnimation?.stop()
-                    // Возвращаем первый кадр перед уходом
                     deerImageView?.setImageResource(R.drawable.deer_frame_1)
 
-                    // Анимация 2: Уезд обратно за экран
+                    // Анимация уезда назад
                     overlayView?.animate()
-                        ?.translationX(500f)
-                        ?.setDuration(350)
+                        ?.translationX(600f)
+                        ?.setDuration(400)
                         ?.withEndAction {
                             removeOverlay()
                         }
@@ -177,15 +188,15 @@ class AppService : Service(), ShakeDetector.Listener {
     }
 
     private fun removeOverlay() {
-        if (overlayView != null && isShowing) {
+        if (overlayView != null) {
             try {
                 windowManager.removeView(overlayView)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
             overlayView = null
-            isShowing = false
         }
+        isShowing = false
     }
 
     private fun startForegroundNotification() {
@@ -201,12 +212,11 @@ class AppService : Service(), ShakeDetector.Listener {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Олень на страже")
-            .setContentText("Слушаю двойной щелчок или тряску...")
+            .setContentText("Жду двойной щелчок или встряску...")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ ANDROID 14+: Указываем тип сервиса явно
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
@@ -222,7 +232,9 @@ class AppService : Service(), ShakeDetector.Listener {
                 release()
             } catch (e: Exception) { e.printStackTrace() }
         }
-        shakeDetector.stop()
+        try {
+            shakeDetector.stop()
+        } catch (e: Exception) { e.printStackTrace() }
         removeOverlay()
         super.onDestroy()
     }
