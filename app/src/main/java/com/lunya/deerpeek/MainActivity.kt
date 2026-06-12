@@ -13,7 +13,7 @@ import androidx.core.app.ActivityCompat
 
 class MainActivity : AppCompatActivity() {
 
-    override override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         // Создаем простую кнопку программно, чтобы не плодить XML файлы интерфейса
