@@ -5,11 +5,13 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    // Этот флаг как раз и требует, чтобы репозитории были только здесь
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) 
     repositories {
-        google() // КРИТИЧЕСКИ ВАЖНО
-        mavenCentral()
+        google()          // Сюда пойдут зависимости Google AI SDK
+        mavenCentral()    // Сюда пойдет Seismic и остальные либы
     }
 }
 
