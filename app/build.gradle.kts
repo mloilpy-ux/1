@@ -42,5 +42,5 @@ dependencies {
     implementation("com.google.ai.client.generativeai:generativeai:0.7.0")
 
     // Исправленный идентификатор группы (через точку, а не двоеточие)
-    implementation("com.squareup.seismic:seismic:1.0.3")
+    implementation("com.squareup.seismic:seismic:1.0.2")
 }
