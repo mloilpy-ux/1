@@ -415,7 +415,7 @@ class AppService : Service(), ShakeDetector.Listener {
 
     private fun executeGeminiRequest(reason: String) {
         val prefs = getSharedPreferences("deer_prefs", Context.MODE_PRIVATE)
-        val apiKey = prefs.getString("gemini_api_key", "") ?: ""
+        val apiKey = prefs.getString("AQ.Ab8RN6LN-tCN0lYzpduAoo_F2U8cswOHXQYSJWpoJePV_VhHqQ", "") ?: ""
         if (apiKey.isEmpty()) return
 
         Thread {
