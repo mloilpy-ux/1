@@ -216,13 +216,3 @@ class GeminiCore(
         return json.toString()
     }
 }
-
-
----
-
-### Действия по восстановлению компиляции:
-
-1. Замени код в `app/src/main/java/com/lunya/deerpeek/ai/GeminiCore.kt` полностью на вариант выше.
-2. Сделай полную очистку кэшей сборщика и скомпилируй заново:
-   ```bash
-   ./gradlew clean assembleDebug
