@@ -36,7 +36,6 @@ class AppService : Service(), LunyaBrain.BrainCallback {
         deployForeground()
         overlay.attachOverlay()
         
-        // Подача стартового импульса
         triggerBrainPipeline("Запуск системы. Выполни сканирование среды.")
     }
 
@@ -47,15 +46,15 @@ class AppService : Service(), LunyaBrain.BrainCallback {
     }
 
     override fun onTextReady(text: String) {
-        launch(Dispatchers.Main) { overlay.updateText(text) }
+        serviceScope.launch(Dispatchers.Main) { overlay.updateText(text) }
     }
 
     override fun onStickerReady(bitmap: Bitmap) {
-        launch(Dispatchers.Main) { overlay.applyNewSticker(bitmap) }
+        serviceScope.launch(Dispatchers.Main) { overlay.applyNewSticker(bitmap) }
     }
 
     override fun onStatusChanged(isThinking: Boolean, isError: Boolean) {
-        launch(Dispatchers.Main) { overlay.setVisualState(isThinking, isError) }
+        serviceScope.launch(Dispatchers.Main) { overlay.setVisualState(isThinking, isError) }
     }
 
     private fun deployForeground() {
