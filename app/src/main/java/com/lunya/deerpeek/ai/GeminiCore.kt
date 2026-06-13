@@ -42,7 +42,7 @@ class GeminiCore(
             return@withContext response.text ?: "{\"error\": \"Empty response text\"}"
 
         } catch (e: Exception) {
-            // Динамическая проверка типа исключения во избежание сбоев компиляции при отсутствии явной зависимости
+            // Изоляция через анализ метаданных класса для предотвращения MissingFieldException компиляции
             val exceptionClassName = e.javaClass.name
             if (exceptionClassName.contains("MissingFieldException") || exceptionClassName.contains("SerializationException")) {
                 return@withContext """
@@ -56,7 +56,6 @@ class GeminiCore(
                 """.trimIndent()
             }
 
-            // Глобальный перехват аппаратных или сетевых исключений
             val escapedError = (e.message ?: "Unknown Core Exception").replace("\"", "\\\"")
             return@withContext """
                 {
