@@ -5,45 +5,53 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import com.lunya.deerpeek.core.AppService // Принудительный импорт обновленного пути сервиса
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Проверяем разрешение на оверлей
-        if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Дайте разрешение DeerPeek поверх других окон", Toast.LENGTH_LONG).show()
+        // Проверка разрешений для отрисовки системного оверлея Луни
+        if (checkOverlayPermission()) {
+            startCoreService()
+        } else {
+            requestOverlayPermission()
+        }
+    }
+
+    private fun checkOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")
             )
-            startActivityForResult(intent, 1001)
-        } else {
-            startOverlayService()
+            startActivityForResult(intent, 123)
         }
+    }
+
+    private fun startCoreService() {
+        val intent = Intent(this, AppService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        finish() // Завершение инстанса Activity, управление переходит фоновому слою
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001) {
-            if (Settings.canDrawOverlays(this)) {
-                startOverlayService()
-            } else {
-                Toast.makeText(this, "Без разрешений Луня работать не сможет", Toast.LENGTH_SHORT).show()
-                finish()
-            }
+        if (requestCode == 123 && checkOverlayPermission()) {
+            startCoreService()
         }
-    }
-
-    private fun startOverlayService() {
-        val serviceIntent = Intent(this, AppService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-        finish() // Закрываем экран, управление переходит к сервису
     }
 }
