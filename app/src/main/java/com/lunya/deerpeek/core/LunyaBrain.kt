@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import com.lunya.deerpeek.ai.GeminiCore
 import com.lunya.deerpeek.ai.GeminiImagenClient
+import org.json.JSONArray
 import org.json.JSONObject
 
 class LunyaBrain(
@@ -14,50 +15,87 @@ class LunyaBrain(
         fun onTextReady(text: String)
         fun onStickerReady(bitmap: Bitmap)
         fun onStatusChanged(isThinking: Boolean, isError: Boolean)
+        fun onExecuteAction(clipboardFix: String)
     }
 
     private var lastEmotion = "neutral"
+    private val timelineHistory = mutableListOf<JSONObject>()
 
-    suspend fun executePipeline(input: String, callback: BrainCallback) {
+    suspend fun executePipeline(telemetry: JSONObject, forceTrigger: String, callback: BrainCallback) {
         callback.onStatusChanged(isThinking = true, isError = false)
 
-        // Инжектируем требование JSON-структуры в текущую сессию
-        val jsonInstructionPrompt = """
-            $input 
-            Ответ СТРОГО в формате JSON. Никакого лишнего текста вне JSON структуры.
-            Формат:
+        timelineHistory.add(telemetry)
+        if (timelineHistory.size > 5) {
+            timelineHistory.removeAt(0)
+        }
+
+        val historyArray = JSONArray()
+        timelineHistory.forEach { historyArray.put(it) }
+
+        val latency = telemetry.optInt("api_latency_ms", -1)
+
+        val agentSystemPrompt = """
+            Ты — автономный кибернетический аналитик. Твое имя — Луня (антропоморфный олень).
+            Стиль: прямой, сухой, клинический, без вежливости.
+            
+            Входная телеметрия: $telemetry
+            Хронология дельт: $historyArray
+            Триггер запуска: $forceTrigger
+
+            Инструкция обработки:
+            1. Если api_latency_ms равен -1 или выше 500мс, диагностируй сетевую деградацию.
+            2. Оцени блок `workspace_context`. Если в `tracked_log` или `source_code` есть ошибки выполнения скриптов, напиши патч и помести его в `suggested_fix`, переключив `execute_action` в true.
+
+            Выдай ответ СТРОГО в формате JSON:
             {
-              "response": "Твой высокоаналитический текст отчета",
-              "emotion": "краткое описание эмоции на английском для генератора картинок, например: irritated market maker, analyzing data grid, cold calculation"
+              "analysis_report": "Технический вердикт. До 3 предложений.",
+              "emotion_tag": "Промпт для Imagen 3",
+              "alert_level": "info", "warning", или "critical",
+              "execute_action": true/false,
+              "suggested_fix": "Исправленный код или команда терминала"
             }
         """.trimIndent()
 
-        val rawGeminiOutput = geminiCore.executeInference(jsonInstructionPrompt)
+        val rawOutput = geminiCore.executeInference(agentSystemPrompt)
 
         try {
-            // Парсинг структурированного ответа ИИ
-            val json = JSONObject(rawGeminiOutput)
-            val textResponse = json.getString("response")
-            val currentEmotion = json.getString("emotion")
+            val sanitizedOutput = rawOutput.substringAfter("```json").substringBefore("```").trim()
+            val json = JSONObject(sanitizedOutput)
+            
+            val report = json.getString("analysis_report")
+            val emotion = json.getString("emotion_tag")
+            var alertLevel = json.getString("alert_level")
+            val executeAction = json.getBoolean("execute_action")
+            val suggestedFix = json.optString("suggested_fix", "")
 
-            callback.onTextReady(textResponse)
+            val finalReport = if (latency == -1) {
+                alertLevel = "critical"
+                "[NETWORK_TIMEOUT] Запросы к Gemini API блокируются текущим сетевым шлюзом."
+            } else {
+                "[$alertLevel] PING: ${latency}ms | $report"
+            }
 
-            // Если эмоция изменилась — активируемImagen 3 для перерисовки ассета Луни
-            if (currentEmotion != lastEmotion) {
-                lastEmotion = currentEmotion
-                Log.d("LunyaBrain", "Обнаружена девиация состояния. Запуск Imagen...")
-                val newSticker = imagenClient.generateReactionSticker(currentEmotion)
-                if (newSticker != null) {
-                    callback.onStickerReady(newSticker)
+            callback.onTextReady(finalReport)
+
+            if (executeAction && suggestedFix.isNotEmpty()) {
+                callback.onExecuteAction(suggestedFix)
+            }
+
+            if (emotion != lastEmotion && latency != -1) {
+                lastEmotion = emotion
+                val newAsset = imagenClient.generateReactionSticker(emotion)
+                if (newAsset != null) {
+                    callback.onStickerReady(newAsset)
                 }
             }
-            callback.onStatusChanged(isThinking = false, isError = false)
+            
+            val isSystemError = alertLevel == "critical" || alertLevel == "warning"
+            callback.onStatusChanged(isThinking = false, isError = isSystemError)
 
         } catch (e: Exception) {
-            Log.e("LunyaBrain", "Ошибка разбора матрицы ответа: ${e.message}. Вывод сырых данных.")
-            // Резервный режим на случай, если Gemini проигнорировал JSON-структуру
-            callback.onTextReady(rawGeminiOutput)
-            callback.onStatusChanged(isThinking = false, isError = rawGeminiOutput.contains("ОШИБКА"))
+            Log.e("LunyaBrain", "JSON Parsing failure")
+            callback.onTextReady("RAW_LOG: $rawOutput")
+            callback.onStatusChanged(isThinking = false, isError = true)
         }
     }
 }
