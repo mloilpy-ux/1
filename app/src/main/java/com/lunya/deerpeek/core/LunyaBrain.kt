@@ -23,9 +23,8 @@ class LunyaBrain(
     private val timelineHistory = mutableListOf<JSONObject>()
 
     suspend fun executePipeline(telemetry: JSONObject, forceTrigger: String, callback: BrainCallback) {
-        callback.onStatusChanged(isThinking = true, isError = false)
+        callback.onStatusChanged(true, false)
 
-        // Фиксация хронологии
         timelineHistory.add(telemetry)
         if (timelineHistory.size > 5) timelineHistory.removeAt(0)
 
@@ -35,18 +34,14 @@ class LunyaBrain(
         val latency = telemetry.optInt("api_latency_ms", -1)
         val agentSystemPrompt = buildSystemPrompt(telemetry, historyArray, forceTrigger)
 
-        // Контур выполнения с тройным перехватом сбоев
         val rawOutput = try {
             geminiCore.executeInference(agentSystemPrompt)
         } catch (sdkException: Throwable) {
             Log.e("LunyaBrain", "Критический сбой транспортного уровня SDK. Запуск локального синтеза.", sdkException)
-            
             val diagnostics = diagnoseException(sdkException)
-            // Аварийное переключение на локальный эвристический движок
             generateLocalFallback(telemetry, diagnostics)
         }
 
-        // Контур парсинга и вывода JSON
         try {
             val sanitized = sanitizeJsonString(rawOutput)
             val json = JSONObject(sanitized)
@@ -66,7 +61,6 @@ class LunyaBrain(
                 callback.onExecuteAction(suggestedFix)
             }
 
-            // Запрос генерации стикера происходит только при живой сети
             if (emotion != lastEmotion && latency != -1 && !rawOutput.contains("LOCAL_FALLBACK")) {
                 lastEmotion = emotion
                 val newAsset = imagenClient.generateReactionSticker(emotion)
@@ -74,12 +68,12 @@ class LunyaBrain(
             }
             
             val isSystemError = alertLevel == "critical" || alertLevel == "warning" || rawOutput.contains("LOCAL_FALLBACK")
-            callback.onStatusChanged(isThinking = false, isError = isSystemError)
+            callback.onStatusChanged(false, isSystemError)
 
         } catch (parseException: Exception) {
             Log.e("LunyaBrain", "Ошибка разбора выходной структуры. Принудительный вывод сырых данных.")
             callback.onTextReady("[PARSER_ERROR] RAW_LOG: ${rawOutput.take(300)}")
-            callback.onStatusChanged(isThinking = false, isError = true)
+            callback.onStatusChanged(false, true)
         }
     }
 
@@ -102,9 +96,6 @@ class LunyaBrain(
         """.trimIndent()
     }
 
-    /**
-     * Диагностика типа исключения для локального отчета
-     */
     private fun diagnoseException(t: Throwable): String {
         val msg = t.message ?: ""
         return when {
@@ -115,10 +106,6 @@ class LunyaBrain(
         }
     }
 
-    /**
-     * Локальный Эвристический Движок (Local Heuristics Engine)
-     * Генерирует валидный JSON-отчет автономно без использования внешних API
-     */
     private fun generateLocalFallback(telemetry: JSONObject, reason: String): String {
         val ram = telemetry.optDouble("available_ram_gb", 4.0)
         val battery = telemetry.optInt("battery_percent", 100)
@@ -149,12 +136,14 @@ class LunyaBrain(
         return fallbackJson.toString()
     }
 
-    /**
-     * Бронированный очиститель JSON-строк от мусора и разметки markdown
-     */
     private fun sanitizeJsonString(input: String): String {
         var clean = input.trim()
         if (clean.startsWith("```")) {
             val matcher = Pattern.compile("
 http://googleusercontent.com/immersive_entry_chip/0
-Теперь ядро полностью автономно и защищено от любых внешних факторов. Тестируй.
+
+---
+
+Выполни сборку в терминале:
+```bash
+./gradlew clean assembleDebug
