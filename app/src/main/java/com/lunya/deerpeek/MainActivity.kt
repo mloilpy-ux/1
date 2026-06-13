@@ -401,10 +401,3 @@ class LunyaBrain(private val geminiCore: GeminiCore, private val imagenClient: G
         var clean = input.trim()
         if (clean.startsWith("```")) {
             val matcher = Pattern.compile("
-http://googleusercontent.com/immersive_entry_chip/0
-
-#### Шаг 3: Перезапуск
-Выполни принудительную очистку кэша сборщика и запусти компиляцию повторно:
-
-```bash
-./gradlew clean assembleDebug
