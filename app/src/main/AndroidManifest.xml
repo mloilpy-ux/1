@@ -23,10 +23,10 @@
         </activity>
 
         <service
-            android:name=".AppService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse" />
+    android:name=".core.AppService"
+    android:enabled="true"
+    android:exported="false"
+    android:foregroundServiceType="specialUse" />
 
     </application>
 </manifest>
