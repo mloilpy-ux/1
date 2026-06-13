@@ -28,7 +28,7 @@ class AppService : Service() {
     private var responseTv: TextView? = null
 
     // СЮДА СВОЙ РЕАЛЬНЫЙ API КЛЮЧ GEMINI
-    private val API_KEY = "ТВОЙ_API_КЛЮЧ"
+    private val API_KEY = "AQ.Ab8RN6LfK-1CnHzd5FBqfxANiH5uPyeYePb4pzu5-xvrGbQTNg"
 
     private val characterSystemPrompt = """
         Ты — Луня, строго антропоморфный олень (не гибрид). У тебя синий мех, неоново-зеленые волосы, фиолетовые глаза, фиолетовый нос и фиолетовые когти. 
@@ -119,7 +119,7 @@ class AppService : Service() {
     private fun executeGeminiRequest(reason: String) {
         Log.d("DeerPeek", "Запуск корутины для запроса к Gemini...")
         
-        if (API_KEY == "ТВОЙ_API_КЛЮЧ" || API_KEY.isEmpty()) {
+        if (API_KEY == "AQ.Ab8RN6LfK-1CnHzd5FBqfxANiH5uPyeYePb4pzu5-xvrGbQTNg" || API_KEY.isEmpty()) {
             Log.e("DeerPeek", "ОШИБКА: Забыли вставить реальный API-ключ!")
             responseTv?.text = "Ошибка: Нет ключа API"
             return
