@@ -24,18 +24,15 @@ class TelemetryCollector(private val context: Context) {
     fun getSystemSnapshot(): JSONObject {
         val json = JSONObject()
         
-        // 1. Метрики оперативной памяти
         val memoryInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memoryInfo)
         val availableRamGb = memoryInfo.availMem / (1024 * 1024 * 1024.0)
         
-        // 2. Энергосистема
         val batteryStatus: Intent? = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         val batteryPct = if (scale > 0) (level / scale.toFloat()) * 100 else -1.0
 
-        // 3. Сетевой статус и задержка (RTT) до шлюза Google API
         val activeNetwork = connectivityManager.activeNetwork
         val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
         val netType = when {
@@ -44,16 +41,16 @@ class TelemetryCollector(private val context: Context) {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
             else -> "UNKNOWN"
         }
+        
+        // Коррекция: Расширенный лимит ожидания ответа шлюза
         val apiLatency = measureApiLatency()
 
-        // 4. Термальный троттлинг ядра (Исправлено: привязка к API 29 / Q)
         val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             powerManager.currentThermalStatus
         } else {
             0
         }
 
-        // 5. Захват данных буфера обмена
         val clipboardText = try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             if (clipboard.hasPrimaryClip() && clipboard.primaryClipDescription?.hasMimeType("text/*") == true) {
@@ -61,7 +58,6 @@ class TelemetryCollector(private val context: Context) {
             } else ""
         } catch (e: Exception) { "" }
 
-        // 6. Сбор контекста локальной рабочей директории (Workspace)
         val workspaceData = readWorkspaceContext()
 
         json.put("available_ram_gb", String.format("%.2f", availableRamGb))
@@ -80,8 +76,9 @@ class TelemetryCollector(private val context: Context) {
             val startTime = System.currentTimeMillis()
             val url = URL("https://generativelanguage.googleapis.com")
             val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 700
-            connection.readTimeout = 700
+            // Тайм-аут увеличен до 4000мс для компенсации RTT через прокси/VPN
+            connection.connectTimeout = 4000
+            connection.readTimeout = 4000
             connection.requestMethod = "HEAD"
             connection.connect()
             val responseCode = connection.responseCode
