@@ -19,19 +19,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         
         settingsManager = SettingsManager(this)
-
-        // Переход к валидации токена и разрешений
         evaluateRuntimeState()
     }
 
     private fun evaluateRuntimeState() {
-        // 1. Критическая проверка: наличие API токена
-        if (settingsManager.getApiKey().isNullOrBlank()) {
+        // Проверка токена через стандартное Kotlin-свойство
+        if (settingsManager.geminiApiKey.isBlank()) {
             showTokenInputDialog()
             return
         }
 
-        // 2. Проверка разрешений на системный оверлей
         if (checkOverlayPermission()) {
             startCoreService()
         } else {
@@ -41,7 +38,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showTokenInputDialog() {
         val input = EditText(this).apply {
-            hint = "AIzaSy..." // Стандартный префикс ключей Google Gemini
+            hint = "AIzaSy..."
             setPadding(50, 40, 50, 40)
         }
 
@@ -53,9 +50,9 @@ class MainActivity : ComponentActivity() {
             .setPositiveButton("Записать") { dialog, _ ->
                 val token = input.text.toString().trim()
                 if (token.isNotEmpty()) {
-                    settingsManager.setApiKey(token) // Запись в SharedPreferences
+                    settingsManager.geminiApiKey = token // Запись свойства напрямую
                     dialog.dismiss()
-                    evaluateRuntimeState() // Повторный прогон проверок среды
+                    evaluateRuntimeState()
                 }
             }
             .setNegativeButton("Выход") { _, _ ->
@@ -89,7 +86,7 @@ class MainActivity : ComponentActivity() {
         } else {
             startService(intent)
         }
-        finish() // Выгрузка Activity, управление переходит фоновому демону
+        finish()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
