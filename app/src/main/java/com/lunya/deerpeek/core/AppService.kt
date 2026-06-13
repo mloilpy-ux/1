@@ -2,74 +2,73 @@ package com.lunya.deerpeek.core
 
 import android.app.*
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.lunya.deerpeek.ai.GeminiCore
-import com.lunya.deerpeek.ai.ImageGenClient
+import com.lunya.deerpeek.ai.GeminiImagenClient
 import com.lunya.deerpeek.data.MemoryManager
 import com.lunya.deerpeek.data.SettingsManager
-import com.lunya.deerpeek.ui.OverlayRenderer // Твой предыдущий файл перемещен в папку ui
+import com.lunya.deerpeek.ui.OverlayRenderer
 import kotlinx.coroutines.*
 
-class AppService : Service() {
+class AppService : Service(), LunyaBrain.BrainCallback {
     private lateinit var settings: SettingsManager
     private lateinit var memory: MemoryManager
-    private lateinit var gemini: GeminiCore
-    private lateinit var imageClient: ImageGenClient
+    private lateinit var geminiCore: GeminiCore
+    private lateinit var imagenClient: GeminiImagenClient
+    private lateinit var brain: LunyaBrain
     private lateinit var overlay: OverlayRenderer
     
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
 
     override fun onCreate() {
         super.onCreate()
         
         settings = SettingsManager(this)
         memory = MemoryManager(this)
-        gemini = GeminiCore(settings, memory)
-        imageClient = ImageGenClient()
+        geminiCore = GeminiCore(settings, memory)
+        imagenClient = GeminiImagenClient(settings)
+        brain = LunyaBrain(geminiCore, imagenClient)
         overlay = OverlayRenderer(this)
         
-        // Хардкод для тестов убран. Запись ключа напрямую в хранилище (временно, до создания UI настроек)
-        if (settings.geminiApiKey.isEmpty()) {
-            settings.geminiApiKey = "AQ.Ab8RN6LfK-1CnHzd5FBqfxANiH5uPyeYePb4pzu5-xvrGbQTNg" 
-        }
-
         deployForeground()
         overlay.attachOverlay()
         
-        dispatchPipeline("Модульная структура загружена. Проверка подсистем.")
+        // Подача стартового импульса
+        triggerBrainPipeline("Запуск системы. Выполни сканирование среды.")
     }
 
-    private fun dispatchPipeline(data: String) {
-        overlay.updateText("Анализ...")
-        
-        scope.launch {
-            val textResult = gemini.executeInference(data)
-            
-            // Если ответ содержит маркер арт-генерации (например, [ART])
-            if (textResult.contains("[ART]")) {
-                imageClient.requestImageSynthesis(textResult)
-            }
-
-            withContext(Dispatchers.Main) {
-                overlay.updateText(textResult)
-                overlay.updateStateIcon(textResult.contains("ОШИБКА") || textResult.contains("ОТКАЗ"))
-            }
+    private fun triggerBrainPipeline(input: String) {
+        serviceScope.launch {
+            brain.executePipeline(input, this@AppService)
         }
+    }
+
+    override fun onTextReady(text: String) {
+        launch(Dispatchers.Main) { overlay.updateText(text) }
+    }
+
+    override fun onStickerReady(bitmap: Bitmap) {
+        launch(Dispatchers.Main) { overlay.applyNewSticker(bitmap) }
+    }
+
+    override fun onStatusChanged(isThinking: Boolean, isError: Boolean) {
+        launch(Dispatchers.Main) { overlay.setVisualState(isThinking, isError) }
     }
 
     private fun deployForeground() {
-        val channelId = "lunya_core"
+        val channelId = "lunya_advanced_core"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "System Core", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "Lunya Operations", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-        startForeground(777, NotificationCompat.Builder(this, channelId).setContentTitle("Core Active").build())
+        startForeground(777, NotificationCompat.Builder(this, channelId).setContentTitle("Lunya Core Online").build())
     }
 
     override fun onDestroy() {
-        scope.cancel()
+        serviceScope.cancel()
         overlay.detachOverlay()
         super.onDestroy()
     }
