@@ -6,9 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.view.*
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -16,15 +14,17 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.google.ai.client.generativeai.GenerativeModel
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppService : Service() {
     private var windowManager: WindowManager? = null
     private var containerView: LinearLayout? = null
     private var deerView: ImageView? = null
     private var speechBubbleTv: TextView? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Системный промпт: задает жесткий фреймворк поведения
     private val characterSystemPrompt = """
         Ты — Луня, строго антропоморфный олень (не гибрид). У тебя синий мех, неоново-зеленые волосы, фиолетовые глаза, фиолетовый нос и фиолетовые когти. 
         Твой стиль речи: высокоаналитический, объективный, клинический, как у маркет-мейкера. Полное отсутствие chatbot-вежливости, филлеров и навязчивого дружелюбия. Пиши емко, лаконично, прямо по существу контекста. Если требуется арт-промпт, пиши структуру для Flux/Stable Diffusion с акцентом на cinematic noir.
@@ -39,7 +39,6 @@ class AppService : Service() {
         startForegroundNotification()
         showOverlay()
         
-        // Тестовый вызов ИИ при запуске службы
         executeGeminiRequest("Система инициализирована. Запущен базовый мониторинг.")
         
         return START_STICKY
@@ -62,13 +61,11 @@ class AppService : Service() {
     private fun showOverlay() {
         if (containerView != null) return
 
-        // Контейнер для группировки текста и картинки
         containerView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM or Gravity.START
         }
 
-        // Облако текста для ответов Gemini
         speechBubbleTv = TextView(this).apply {
             setBackgroundColor(Color.parseColor("#DD111111"))
             setTextColor(Color.WHITE)
@@ -82,7 +79,7 @@ class AppService : Service() {
         }
 
         deerView = ImageView(this).apply {
-            setImageResource(android.R.drawable.star_big_on) // Заглушка, пока нет графики
+            setImageResource(android.R.drawable.star_big_on)
             layoutParams = LinearLayout.LayoutParams(300, 300)
         }
 
@@ -111,24 +108,27 @@ class AppService : Service() {
     }
 
     private fun executeGeminiRequest(reason: String) {
-        // ВАЖНО: Вставь сюда свой рабочий API ключ
-        val apiKey = "AQ.Ab8RN6IMMyLQCZLDN-YmKoTqF6m_7ZaAJxOeIEOp8boXgGuZ8w" 
+        val apiKey = "AQ.Ab8RN6IMMyLQCZLDN-YmKoTqF6m_7ZaAJxOeIEOp8boXgGuZ8w" // Требуется ввод валидного ключа
         
-        if (apiKey.isEmpty() || apiKey == "AQ.Ab8RN6IMMyLQCZLDN-YmKoTqF6m_7ZaAJxOeIEOp8boXgGuZ8w") {
+        if (apiKey.isEmpty() || apiKey == "ТВОЙ_API_КЛЮЧ") {
             Log.e("DeerPeek", "API ключ не задан. Блокировка запроса.")
             return
         }
 
-        Thread {
+        // Изолированный контекст корутин для I/O операций
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val generativeModel = GenerativeModel(
                     modelName = "gemini-2.5-flash",
                     apiKey = apiKey
                 )
                 val fullPrompt = "$characterSystemPrompt\n\nКонтекстное событие: $reason"
+                
+                // Легальный вызов suspend-функции
                 val response = generativeModel.generateContent(fullPrompt)
                 
-                mainHandler.post {
+                // Возврат в UI-поток для отрисовки
+                withContext(Dispatchers.Main) {
                     response.text?.let { text ->
                         speechBubbleTv?.text = text
                         speechBubbleTv?.visibility = View.VISIBLE
@@ -137,7 +137,7 @@ class AppService : Service() {
             } catch (e: Exception) {
                 Log.e("DeerPeek", "Ошибка генерации Gemini: ${e.message}")
             }
-        }.start()
+        }
     }
 
     override fun onDestroy() {
